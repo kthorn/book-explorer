@@ -4,9 +4,15 @@
 
 This document records ideas deliberately excluded from the version 1 MVP. Each item requires evidence from actual use before design or implementation.
 
+## Shared Taste Profile
+
+Add an approved cross-conversation summary of general preferences only if ratings, reading statuses, and book-specific notes do not provide enough context. Keep proposed observations out of SQLite until accepted, following the same approval boundary as book opinions.
+
+**Add when:** the same general preference must be restated across conversations or cannot reasonably be attached to a book.
+
 ## Structured Book Facets
 
-Add a controlled but extensible vocabulary only if free-text book notes and taste notes become difficult to search or apply consistently.
+Add a controlled but extensible vocabulary only if free-text book notes or a later shared taste profile become difficult to search or apply consistently.
 
 Possible initial facets:
 
