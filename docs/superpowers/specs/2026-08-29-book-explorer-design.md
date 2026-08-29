@@ -64,7 +64,7 @@ Each model turn constructs a fresh `DefaultResourceLoader` configured with `noEx
 
 These constants are the complete `tools` allowlist. The application-local web-search config must exist and validate before loader creation. After `loader.reload()` and session creation, every turn inspects the active `session.agent.state.tools` names before prompting and fails closed if the allowlist was omitted or any unexpected registered tool survived filtering. A startup probe uses and disposes its own loader rather than the first turn's loader. Coding, shell, filesystem editing, subagent, page-fetching, curator UI, and other Pi or `pi-web-access` tools are disabled.
 
-The application-local `web-search.json` sets `provider: "openai"`, `workflow: "none"`, and nested `tools.sourceCheck.enabled`, `tools.fetchContent.enabled`, and `tools.getSearchContent.enabled` to `false`. The headless extension runner is never bound to Pi dialog/TUI services, so curator mode remains unavailable. A small inline guard extension requires `provider: "openai"` and `workflow: "none"`, blocks `includeContent`, and rejects provider arrays. Before allowing the call, it uses the exact `ModelRuntime` passed to the session to verify an `openai-codex` model and OAuth credential; API-key and environment fallbacks do not satisfy this check. Otherwise it returns a visible search-unavailable error instead of letting `pi-web-access` choose a fallback. `PI_CODING_AGENT_DIR` is set before importing the extension, causing `pi-web-access@0.24.2` to place its configuration and any on-disk fetch cache under Book Explorer's application directory rather than the user's general Pi directory. `pi-web-access` module state is process-wide even though each agent session is ephemeral. Book Explorer therefore permits only one model turn globally, avoiding cross-conversation mutation of that extension state. Each complete search result is consumed during its turn and durable citations are recorded in SQLite. The application clears any stale `web-search-cache` directory at startup, and the guarded search path must not write to it.
+The application-local `web-search.json` sets `provider: "openai"`, `workflow: "none"`, and nested `tools.sourceCheck.enabled`, `tools.fetchContent.enabled`, and `tools.getSearchContent.enabled` to `false`. The headless extension runner is never bound to Pi dialog/TUI services, so curator mode remains unavailable. A small inline guard extension requires `provider: "openai"` and `workflow: "none"`, blocks `includeContent`, and rejects provider arrays. Before allowing the call, it uses the exact `ModelRuntime` passed to the session to verify an `openai-codex` model and OAuth credential; API-key and environment fallbacks do not satisfy this check. Otherwise it returns a visible search-unavailable error instead of letting `pi-web-access` choose a fallback. `PI_CODING_AGENT_DIR` is set before importing the extension, causing `pi-web-access@0.24.2` to place its configuration and any on-disk fetch cache under Book Explorer's application directory rather than the user's general Pi directory. `pi-web-access` module state is process-wide even though each agent session is ephemeral. Book Explorer therefore permits only one model turn globally, avoiding cross-conversation mutation of that extension state. Each complete search result is consumed during its request; only citations used by a saved recommendation are recorded in SQLite. The application clears any stale `web-search-cache` directory at startup, and the guarded search path must not write to it.
 
 Pi's credential storage uses a cross-process file lock during OAuth refresh and mutation. Concurrent coding and Book Explorer sessions therefore do not share conversation state or corrupt credentials because both runtimes open the same auth path. They can still compete for account-level subscription rate and concurrency limits; the UI reports those errors directly.
 
@@ -75,20 +75,18 @@ SQLite enables foreign keys and WAL mode. The process owns one `DatabaseSync` ha
 ### Core records
 
 - `conversations`: name, generated relative Pi session filename, timestamps, and archival state.
-- `turns`: stable UUID, conversation, optional Pi user/assistant entry IDs, state (`pending`, `complete`, `failed`, or `cancelled`), and timestamps. This supplies idempotency and recovery metadata without duplicating message content.
 - `series`: canonical name and optional descriptive note.
 - `books`: title, author text, publication year, cover URL, optional series and series position, reading status, optional integer rating from 1 through 5, and timestamps.
 - `book_identifiers`: book, scheme (`openlibrary_work`, `isbn10`, or `isbn13`), normalized value, and source. A book may have many identifiers; `(scheme, value)` is unique.
-- `book_notes`: book, note text, optional source turn, and timestamp. Notes are append-only by default so changes in opinion remain visible; the user can edit or delete them explicitly.
-- `recommendations`: book, source turn, rationale, cautions, and timestamp.
-- `citations`: source turn, normalized URL, title, supporting snippet when available, observed search provider, and retrieval timestamp. `(turn_id, normalized_url)` is unique.
+- `book_notes`: book, note text, optional source conversation and proposal ID, and timestamp. Notes are append-only by default so changes in opinion remain visible; the user can edit or delete them explicitly.
+- `recommendations`: book, optional source conversation, request UUID, rationale, cautions, and timestamp.
+- `citations`: unique normalized URL, title, supporting snippet when available, observed search provider, and retrieval timestamp.
 - `recommendation_citations`: recommendation and citation foreign keys identifying which researched sources support a recommendation.
-- `taste_notes`: approved free-text preference observation, optional source turn, and timestamp.
-- `tool_actions`: turn, idempotency key, action state, and serialized result containing the affected entity type and ID. The key and result are committed in the same transaction as the action so retries can return the original result.
+- `taste_notes`: approved free-text preference observation, optional source conversation and proposal ID, and timestamp.
 
-Proposed ratings, statuses, book opinions, and taste notes are not SQLite records. `propose_change` appends a Pi custom entry with `customType: "book-explorer-proposed-change"`, a deterministic proposal ID, kind, optional target book, validated payload, explanation, and source turn. Accepting or rejecting appends a `book-explorer-proposal-decision` custom entry. Acceptance also validates the possibly edited payload and transactionally updates `books` or inserts `book_notes`/`taste_notes`. The UI derives pending proposals by matching proposal and decision entries in the conversation JSONL.
+Proposed ratings, statuses, book opinions, and taste notes are not SQLite records. `propose_change` appends a Pi custom entry with `customType: "book-explorer-proposed-change"`, a deterministic proposal ID, kind, optional target book, validated payload, explanation, and request UUID. Accepting or rejecting appends a `book-explorer-proposal-decision` custom entry. Acceptance also validates the possibly edited payload and transactionally updates `books` or inserts `book_notes`/`taste_notes`. The UI derives pending proposals by matching proposal and decision entries in the conversation JSONL.
 
-All tables use explicit primary keys. Durable turn IDs are UUIDs; application entities use integer primary keys. Deleting a conversation cascades its turns and turn-owned citations/tool actions, but optional provenance links from approved book notes, taste notes, and recommendations use `ON DELETE SET NULL`, so conversation removal cannot erase library or taste state. Deleting books and series is always an explicit user action, with their dependent book-owned rows cascading. Unique constraints cover conversation session filename, `(book_identifiers.scheme, book_identifiers.value)`, `(citations.turn_id, citations.normalized_url)`, recommendation identity, and `tool_actions.idempotency_key`. The first numbered migration contains the authoritative v1 DDL and is frozen by schema tests.
+All tables use explicit primary keys and application entities use integer primary keys. Deleting a conversation sets optional provenance links on book notes, taste notes, and recommendations to null, so it cannot erase library or taste state. Deleting books and series is always an explicit user action, with their dependent book-owned rows cascading. Unique constraints cover conversation session filename, `(book_identifiers.scheme, book_identifiers.value)`, normalized citation URL, `(recommendations.request_id, recommendations.book_id)`, and non-null proposal IDs on book and taste notes. The first numbered migration contains the authoritative v1 DDL and is frozen by schema tests.
 
 ### Entity relationships
 
@@ -98,11 +96,6 @@ erDiagram
         int id PK
         string name
         string session_filename UK
-    }
-    TURNS {
-        uuid id PK
-        int conversation_id FK
-        string state
     }
     BOOKS {
         int id PK
@@ -121,61 +114,55 @@ erDiagram
     BOOK_NOTES {
         int id PK
         int book_id FK
-        uuid source_turn_id FK
+        int source_conversation_id FK
+        string source_proposal_id UK
         string note
     }
     TASTE_NOTES {
         int id PK
-        uuid source_turn_id FK
+        int source_conversation_id FK
+        string source_proposal_id UK
         string note
     }
     RECOMMENDATIONS {
         int id PK
         int book_id FK
-        uuid source_turn_id FK
+        int source_conversation_id FK
+        uuid request_id
         string rationale
         string cautions
     }
     CITATIONS {
         int id PK
-        uuid turn_id FK
-        string url
+        string url UK
         string title
     }
     RECOMMENDATION_CITATIONS {
         int recommendation_id PK,FK
         int citation_id PK,FK
     }
-    TOOL_ACTIONS {
-        int id PK
-        uuid turn_id FK
-        string idempotency_key UK
-    }
     SERIES {
         int id PK
         string name
     }
 
-    CONVERSATIONS ||--o{ TURNS : contains
+    CONVERSATIONS o|--o{ BOOK_NOTES : provenance
+    CONVERSATIONS o|--o{ TASTE_NOTES : provenance
+    CONVERSATIONS o|--o{ RECOMMENDATIONS : provenance
     SERIES o|--o{ BOOKS : includes
     BOOKS ||--o{ BOOK_IDENTIFIERS : has
     BOOKS ||--o{ BOOK_NOTES : has
     BOOKS ||--o{ RECOMMENDATIONS : receives
-    TURNS o|--o{ BOOK_NOTES : originates
-    TURNS o|--o{ TASTE_NOTES : originates
-    TURNS o|--o{ RECOMMENDATIONS : produces
-    TURNS ||--o{ CITATIONS : captures
-    TURNS ||--o{ TOOL_ACTIONS : scopes
     RECOMMENDATIONS ||--o{ RECOMMENDATION_CITATIONS : supported_by
     CITATIONS ||--o{ RECOMMENDATION_CITATIONS : supports
 ```
 
 - A **book** is the central library record. Ratings and reading status live directly on it; opinions live in `book_notes`.
-- A **recommendation** means the assistant recommended one book during one turn. It is saved immediately because it records assistant behavior, not the user's opinion.
-- A **citation** is a researched source observed during one turn. The join table allows a recommendation to cite several sources and one source to support several recommendations from that turn.
+- A **recommendation** means the assistant recommended one book during a model request. It is saved immediately because it records assistant behavior, not the user's opinion.
+- A **citation** exists only when a recommendation uses that researched source. The join table allows a recommendation to cite several sources and one source to support several recommendations.
 - A **proposed change** is not a database entity. It is a structured conversation artifact in Pi JSONL until accepted. Acceptance writes the resulting user-owned state to `books`, `book_notes`, or `taste_notes`.
-- A **turn** connects durable domain changes to the conversation that caused them without duplicating chat messages in SQLite.
-- The Pi JSONL session itself is outside the ERD because it is a conversation store, not a SQLite table; `conversations.session_filename` maps to it.
+- A **conversation** provides optional provenance for recommendations and accepted notes without duplicating individual chat turns in SQLite.
+- Request lifecycle, failures, retries, tool calls, proposals, and proposal decisions remain in the Pi JSONL session, which is outside the ERD; `conversations.session_filename` maps to it.
 
 ### Reading status
 
@@ -198,7 +185,7 @@ Open Library lookup is application code, not an agent or `pi-web-access` tool. I
 
 ## Conversation and Agent Behavior
 
-Before each model turn, the server allocates and commits a stable turn UUID, opens the conversation's Pi SessionManager, creates an ephemeral `AgentSession`, and prompts with the new user message. This durable turn ID is available to every custom tool through the turn-scoped closure and scopes idempotency keys, including retries after cancellation or failure. After Pi appends messages, the application records their entry IDs on the turn when available.
+Before each model request, the server generates a request UUID, opens the conversation's Pi `SessionManager`, and appends a `book-explorer-request` custom entry before prompting with the new user message. The request UUID is available to every custom tool through the request-scoped closure. An explicit retry reuses the original request UUID and appends a retry marker. Pi's native JSONL entries remain authoritative for message, tool-call, failure, cancellation, and retry history; none of this lifecycle state is duplicated in SQLite.
 
 For each user turn, the server provides the agent with:
 
@@ -225,7 +212,7 @@ The agent may only propose, not directly apply:
 
 Each proposed-change custom entry appears in the approval queue and can be accepted, edited, or rejected. Acceptance applies the edited value transactionally and appends a decision entry. Rejection appends only the decision entry and leaves SQLite unchanged.
 
-SQLite-changing tool calls use backend-derived idempotency keys containing the durable turn ID, exact tool name, normalized target identity, and semantic slot. Free-form rationale or note wording is never part of the key. For example, two `upsert_book` calls in one message differ by normalized title/author, while a retried `record_recommendation` for the same book returns the first result even if its regenerated prose differs. Version 1 permits at most one proposed change of each kind and semantic slot for the same target within one turn. Its deterministic proposal ID makes repeated `propose_change` calls return the existing JSONL proposal. SQLite-changing tool retries return the serialized original result rather than creating duplicates. Tool transactions commit immediately. If a later model step fails, completed tool effects remain visible and the incomplete turn identifies that some actions were applied; retrying reuses their stored results rather than rolling them back.
+Idempotency is enforced where each result is stored rather than through a generic action ledger. Book and series upserts use their identifier/name uniqueness. `(request_id, book_id)` makes a repeated `record_recommendation` return the existing recommendation even if regenerated prose differs. Proposed-change IDs are derived from the request UUID, kind, normalized target, and semantic slot, so a repeated `propose_change` returns the existing JSONL proposal. Accepted book and taste notes use the proposal ID as a unique source; repeated rating or status assignments are naturally harmless. Tool transactions commit immediately. If a later model step fails, completed effects remain visible and a retry finds those records or JSONL entries instead of creating duplicates.
 
 There is no second extraction model or background analysis pass in version 1. The active conversational agent performs explicit tool calls during its response.
 
@@ -235,7 +222,7 @@ The agent uses the explicitly loaded `pi-web-access@0.24.2` extension when recom
 
 An inline `tool_result` hook runs immediately after each `web_search`. The system prompt states the pinned search constraints and requires search and citation-backed recommendation recording in separate tool rounds. If the model nevertheless issues them as parallel sibling calls, `record_recommendation` rejects the not-yet-captured IDs and the model must retry it after the search result arrives. It reads the in-memory `SessionManager.getEntries()` entry whose `type` is `custom`, `customType` is `web-search-results`, `data.type` is `search`, and `data.id` equals the tool result's `details.searchId`. That custom entry—not the formatted tool-result text—is the source of structured titles, URLs, snippets, and actual search-provider names. Search attribution `openai` is distinct from the credential-provider ID `openai-codex`. Every result must report search provider `openai`; any fallback-provider result is converted to an error result and not persisted.
 
-For accepted results, the hook transactionally creates or finds citation rows linked to the durable turn ID, then returns replacement content that appends a machine-readable citation-ID list while re-emitting the original tool-result details unchanged. `record_recommendation` accepts only IDs in that turn-local captured set; unknown IDs or model-invented URLs are rejected. Stored recommendations therefore retain source provenance without trusting prose-generated links. Search-result custom entries and extension-private details remain in Pi's native JSONL session. The UI ignores non-display custom entries and never assumes their process-local cache identifiers remain dereferenceable after restart.
+For accepted results, the hook retains normalized structured citations in request-scoped memory, then returns replacement content that appends machine-readable opaque citation tokens while re-emitting the original tool-result details unchanged. `record_recommendation` accepts only tokens in that request-local captured set; unknown tokens or model-invented URLs are rejected. In one transaction it creates or finds the recommendation and its cited URL rows, then links them through `recommendation_citations`. Thus only sources actually used by saved recommendations enter SQLite. Search-result custom entries and extension-private details remain in Pi's native JSONL session. The UI ignores non-display custom entries and never assumes their process-local cache identifiers remain dereferenceable after restart.
 
 If search is unavailable, the assistant must distinguish model-memory suggestions from researched claims and must not invent citations. Failure to retrieve metadata or a source is visible but does not erase an otherwise useful recommendation.
 
@@ -258,22 +245,22 @@ Pending proposed changes are reconstructed from Pi JSONL and reviewed individual
 The local API exposes narrowly scoped routes for:
 
 - conversation listing, creation, renaming, and message submission;
-- SSE streaming of the active turn plus a separate CSRF-protected `POST` cancellation route;
+- SSE streaming of the active model request plus a separate CSRF-protected `POST` cancellation route;
 - library search and work/series CRUD;
 - recommendation history;
 - proposed-change acceptance, editing, and rejection.
 
-All state-changing routes validate request bodies and use transactions. At startup the server generates an unguessable per-process CSRF token, embeds it in the served application shell, and requires it in a custom header on every state-changing request. The cancellation route additionally requires the exact active durable turn ID, so a delayed cancellation cannot affect a later turn. It also requires the configured loopback `Host`, an exact same-origin `Origin`, and a JSON content type where applicable. Missing or unexpected values are rejected. These controls prevent drive-by browser requests; they do not attempt to defend against another process running as the same operating-system user.
+All state-changing routes validate request bodies and use transactions. At startup the server generates an unguessable per-process CSRF token, embeds it in the served application shell, and requires it in a custom header on every state-changing request. The cancellation route additionally requires the exact in-memory active request UUID, so a delayed cancellation cannot affect a later request. It also requires the configured loopback `Host`, an exact same-origin `Origin`, and a JSON content type where applicable. Missing or unexpected values are rejected. These controls prevent drive-by browser requests; they do not attempt to defend against another process running as the same operating-system user.
 
 OAuth credentials and provider responses containing secrets are never sent to the browser or stored in SQLite application records.
 
-Only one model turn may run in the process at a time. Direct user library edits and proposed-change decisions remain allowed while the model awaits network I/O because no database transaction spans an await. Agent metadata upserts fill missing bibliographic fields but never overwrite user-owned status, rating, notes, or approved preferences; user changes therefore win and become visible to subsequent tool reads. A second submission from any conversation receives a visible global-busy response rather than running concurrently. This is sufficient for one local user and prevents process-global extension state and subscription limits from coupling concurrent turns; concurrency is reconsidered only if actual use requires it. Pi stream events are mapped to a small browser event schema (`text_delta`, `tool_status`, `citation`, `complete`, and `error`). Error events contain a stable application code, retryable flag, and safe message; authentication, quota/429, concurrency, search, and internal failures are classified before streaming rather than inferred by the browser from text. The streaming response never emits cross-origin access headers. The server honors socket backpressure. On cancellation, disconnect, model error, tool error, or any other non-normal exit it awaits `session.abort()` until Pi is idle, then calls `session.dispose()`, and only then releases the global turn gate. Normal completion also disposes the session before releasing that gate.
+Only one model turn may run in the process at a time. Direct user library edits and proposed-change decisions remain allowed while the model awaits network I/O because no database transaction spans an await. Agent metadata upserts fill missing bibliographic fields but never overwrite user-owned status, rating, notes, or approved preferences; user changes therefore win and become visible to subsequent tool reads. A second submission from any conversation receives a visible global-busy response rather than running concurrently. This is sufficient for one local user and prevents process-global extension state and subscription limits from coupling concurrent turns; concurrency is reconsidered only if actual use requires it. Pi stream events are mapped to a small browser event schema (`text_delta`, `tool_status`, `citation`, `complete`, and `error`). Error events contain a stable application code, retryable flag, and safe message; authentication, quota/429, concurrency, search, and internal failures are classified before streaming rather than inferred by the browser from text. The streaming response never emits cross-origin access headers. The server honors socket backpressure. On cancellation, disconnect, model error, tool error, or any other non-normal exit it awaits `session.abort()` until Pi is idle, then calls `session.dispose()`, and only then releases the global model gate. Normal completion also disposes the session before releasing that gate.
 
 ## Error Handling and Recovery
 
 - Database open or migration failure prevents startup.
 - A failed database tool action aborts that action and is reported to the agent and UI; there is no success-shaped fallback.
-- A failed model turn marks the preallocated turn failed while preserving whatever Pi durably recorded in its JSONL session. An explicit retry creates a child retry attempt tied to the original turn and reuses the original idempotency scope, so already-completed tool actions return their prior results.
+- A failed model request leaves its native Pi error/aborted entries in JSONL. An explicit retry reuses the original request UUID, so already-completed recommendations, upserts, and proposals are found through their own uniqueness rules.
 - Partial assistant output uses Pi's native aborted/error message entry when available, is displayed as incomplete, and is not treated as a completed recommendation rationale.
 - Authentication, quota, and concurrency failures are shown distinctly.
 - Web-search failure produces a visible limitation and no fabricated source claims.
@@ -289,19 +276,19 @@ Automated tests use temporary SQLite databases and cover:
 - recommendation recording and citation linkage;
 - JSONL proposed-change creation, deterministic deduplication, edited acceptance, rejection, and reconstruction after restart;
 - approved taste context versus pending JSONL proposals;
-- conversation-to-session mapping, failed-turn recovery, ephemeral-session disposal, and isolation from Pi coding-session directories;
+- conversation-to-session mapping, failed-request recovery, ephemeral-session disposal, and isolation from Pi coding-session directories;
 - Pi JSONL conversation → compaction → process restart → native resume → successful second compaction;
 - explicit `openai-codex/gpt-5.6-sol` medium model selection and startup failure when its OAuth or model is unavailable;
 - exact tool allowlisting and a startup failure when the allowlist is absent or unexpected tools remain;
 - rejection of `web_search.includeContent`, non-`none` workflows, provider arrays, unavailable Codex auth, and non-OpenAI provider outcomes, plus no fetch-cache writes;
 - `PI_CODING_AGENT_DIR` initialization before extension import and session-path boundary checks;
-- tool-call idempotency across failure, cancellation, and retry, including committed tool success followed by model failure;
-- two distinct same-tool calls in one message plus a retry with changed free-form prose;
+- local idempotency constraints across failure, cancellation, and retry, including committed tool success followed by model failure;
+- two distinct same-tool calls in one request plus a retry with changed free-form prose;
 - two consecutive successful web-search turns using separate loaders in one process;
 - global model-turn exclusion across two conversations, including every error/abort path followed immediately by another submission;
 - direct user edits during a model turn without lost updates to user-owned fields;
-- mid-turn extraction of citations from correlated `web-search-results` custom entries, citation-ID injection into the model-visible tool result, preservation of actual provider names, and rejection of fallback-provider outcomes or unknown/invented citation IDs and URLs;
-- CSRF, Host, Origin, content-type, active-turn cancellation ID, JSONL/SQLite POSIX data-permission validation, plus primary HTTP routes;
+- mid-request extraction of citations from correlated `web-search-results` custom entries, opaque-token injection into the model-visible tool result, transactional persistence with a recommendation, preservation of actual provider names, and rejection of fallback-provider outcomes or unknown/invented tokens and URLs;
+- CSRF, Host, Origin, content-type, active-request cancellation ID, JSONL/SQLite POSIX data-permission validation, plus primary HTTP routes;
 - safe rendering of malicious HTML, `javascript:` URLs, and malformed links;
 - SSE completion, backpressure, cancellation, disconnect, structured quota errors, and incomplete-response marking;
 - Open Library user-agent, FIFO single-flight rate limiting, cache behavior, and timeout, rate-limit, malformed-response, and not-found handling.
