@@ -100,6 +100,216 @@ CREATE INDEX idx_books_normalized_title_author
 
 const migrations = [{ sql: MIGRATION_1, version: 'PRAGMA user_version = 1' }] as const;
 
+export const LIBRARY_SQL = {
+  selectBook: `
+    SELECT b.id, b.title, b.author, b.publication_year, b.cover_url,
+           b.series_id, b.series_position, b.status, b.rating,
+           b.created_at, b.updated_at, s.name AS series_name
+    FROM books AS b
+    LEFT JOIN series AS s ON s.id = b.series_id
+    WHERE b.id = ?`,
+  selectBookSummary: `
+    SELECT b.id, b.title, b.author, b.publication_year, b.cover_url,
+           b.series_id, b.series_position, b.status, b.rating,
+           b.created_at, b.updated_at, s.name AS series_name
+    FROM books AS b
+    LEFT JOIN series AS s ON s.id = b.series_id
+    WHERE b.id = ?`,
+  selectBookByIdentifier: `
+    SELECT b.id, b.title, b.author, b.publication_year, b.cover_url,
+           b.series_id, b.series_position, b.status, b.rating,
+           b.created_at, b.updated_at, s.name AS series_name
+    FROM books AS b
+    LEFT JOIN series AS s ON s.id = b.series_id
+    INNER JOIN book_identifiers AS i ON i.book_id = b.id
+    WHERE i.scheme = ? AND i.value = ?`,
+  selectBookCandidates: `
+    SELECT b.id, b.title, b.author, b.publication_year, b.cover_url,
+           b.series_id, b.series_position, b.status, b.rating,
+           b.created_at, b.updated_at, s.name AS series_name
+    FROM books AS b
+    LEFT JOIN series AS s ON s.id = b.series_id
+    WHERE b.normalized_title = ? AND b.normalized_author = ?
+    ORDER BY b.id`,
+  insertBook: `
+    INSERT INTO books
+      (title, author, normalized_title, normalized_author, publication_year,
+       cover_url, series_id, series_position)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  insertIdentifier: `
+    INSERT OR IGNORE INTO book_identifiers (book_id, scheme, value, source)
+    VALUES (?, ?, ?, ?)`,
+  selectIdentifiers: `
+    SELECT id, book_id, scheme, value, source, created_at
+    FROM book_identifiers
+    WHERE book_id = ?
+    ORDER BY id`,
+  updateBookTitle: `
+    UPDATE books
+    SET title = ?, normalized_title = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  updateBookAuthor: `
+    UPDATE books
+    SET author = ?, normalized_author = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  updateBookPublicationYear: `
+    UPDATE books
+    SET publication_year = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  updateBookCoverUrl: `
+    UPDATE books
+    SET cover_url = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  updateBookSeriesId: `
+    UPDATE books
+    SET series_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  updateBookSeriesPosition: `
+    UPDATE books
+    SET series_position = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  updateBookStatus: `
+    UPDATE books
+    SET status = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  updateBookRating: `
+    UPDATE books
+    SET rating = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  fillBookPublicationYear: `
+    UPDATE books
+    SET publication_year = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND publication_year IS NULL`,
+  fillBookCoverUrl: `
+    UPDATE books
+    SET cover_url = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND cover_url IS NULL`,
+  fillBookSeriesId: `
+    UPDATE books
+    SET series_id = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND series_id IS NULL`,
+  fillBookSeriesPosition: `
+    UPDATE books
+    SET series_position = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND series_position IS NULL`,
+  deleteBook: 'DELETE FROM books WHERE id = ?',
+  searchBooks: `
+    SELECT b.id, b.title, b.author, b.publication_year, b.cover_url,
+           b.series_id, b.series_position, b.status, b.rating,
+           b.created_at, b.updated_at, s.name AS series_name
+    FROM books AS b
+    LEFT JOIN series AS s ON s.id = b.series_id
+    WHERE (? IS NULL OR b.normalized_title LIKE '%' || ? || '%' OR b.normalized_author LIKE '%' || ? || '%')
+      AND (? IS NULL OR b.status = ?)
+      AND (? IS NULL OR b.rating = ?)
+      AND (? IS NULL OR b.series_id = ?)
+    ORDER BY b.id
+    LIMIT ? OFFSET ?`,
+  countBooks: `
+    SELECT COUNT(*) AS count
+    FROM books AS b
+    WHERE (? IS NULL OR b.normalized_title LIKE '%' || ? || '%' OR b.normalized_author LIKE '%' || ? || '%')
+      AND (? IS NULL OR b.status = ?)
+      AND (? IS NULL OR b.rating = ?)
+      AND (? IS NULL OR b.series_id = ?)`,
+  selectSeries: `
+    SELECT id, name, normalized_name, note, created_at, updated_at
+    FROM series
+    WHERE id = ?`,
+  selectSeriesByName: `
+    SELECT id, name, normalized_name, note, created_at, updated_at
+    FROM series
+    WHERE normalized_name = ?`,
+  insertSeries: `
+    INSERT INTO series (name, normalized_name, note)
+    VALUES (?, ?, ?)`,
+  updateSeriesName: `
+    UPDATE series
+    SET name = ?, normalized_name = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  updateSeriesNote: `
+    UPDATE series
+    SET note = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+  deleteSeries: 'DELETE FROM series WHERE id = ?',
+  searchSeries: `
+    SELECT id, name, normalized_name, note, created_at, updated_at
+    FROM series
+    WHERE (? IS NULL OR normalized_name LIKE '%' || ? || '%')
+    ORDER BY id
+    LIMIT ? OFFSET ?`,
+  countSeries: `
+    SELECT COUNT(*) AS count
+    FROM series
+    WHERE (? IS NULL OR normalized_name LIKE '%' || ? || '%')`,
+  selectNotes: `
+    SELECT id, book_id, note, source_conversation_id, source_proposal_id, created_at
+    FROM book_notes
+    WHERE book_id = ?
+    ORDER BY id`,
+  selectNote: `
+    SELECT id, book_id, note, source_conversation_id, source_proposal_id, created_at
+    FROM book_notes
+    WHERE id = ?`,
+  insertNote: `
+    INSERT INTO book_notes
+      (book_id, note, source_conversation_id, source_proposal_id)
+    VALUES (?, ?, ?, ?)`,
+  updateNote: `
+    UPDATE book_notes
+    SET note = ?
+    WHERE id = ? AND book_id = ?`,
+  updateNoteById: `
+    UPDATE book_notes
+    SET note = ?
+    WHERE id = ?`,
+  deleteNote: 'DELETE FROM book_notes WHERE id = ? AND book_id = ?',
+  deleteNoteById: 'DELETE FROM book_notes WHERE id = ?',
+  selectRecommendationByRequest: `
+    SELECT id, book_id, source_conversation_id, request_id, rationale, cautions, created_at
+    FROM recommendations
+    WHERE request_id = ? AND book_id = ?`,
+  selectRecommendation: `
+    SELECT id, book_id, source_conversation_id, request_id, rationale, cautions, created_at
+    FROM recommendations
+    WHERE id = ?`,
+  insertRecommendation: `
+    INSERT INTO recommendations
+      (book_id, source_conversation_id, request_id, rationale, cautions)
+    VALUES (?, ?, ?, ?, ?)`,
+  countRecommendations: `
+    SELECT COUNT(*) AS count
+    FROM recommendations
+    WHERE book_id = ?`,
+  selectRecommendations: `
+    SELECT id, book_id, source_conversation_id, request_id, rationale, cautions, created_at
+    FROM recommendations
+    WHERE book_id = ?
+    ORDER BY id DESC
+    LIMIT ? OFFSET ?`,
+  selectCitationByUrl: `
+    SELECT id, url, title, snippet, provider, retrieved_at
+    FROM citations
+    WHERE url = ?`,
+  insertOrUpdateCitation: `
+    INSERT INTO citations (url, title, snippet, provider, retrieved_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(url) DO UPDATE SET
+      title = excluded.title,
+      snippet = excluded.snippet,
+      provider = excluded.provider,
+      retrieved_at = excluded.retrieved_at`,
+  insertRecommendationCitation: `
+    INSERT OR IGNORE INTO recommendation_citations (recommendation_id, citation_id)
+    VALUES (?, ?)`,
+  selectRecommendationCitations: `
+    SELECT c.id, c.url, c.title, c.snippet, c.provider, c.retrieved_at
+    FROM citations AS c
+    INNER JOIN recommendation_citations AS rc ON rc.citation_id = c.id
+    WHERE rc.recommendation_id = ?
+    ORDER BY c.id`,
+} as const;
+
 function precreateDatabaseFile(path: string): void {
   if (path === ':memory:') return;
 
