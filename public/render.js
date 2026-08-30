@@ -61,11 +61,24 @@ export function createStreamContext(conversationId) {
     conversationId,
     assistantText: "",
     assistantNode: null,
-    citationNode: null,
     recommendationNode: null,
-    citations: [],
+    activityNode: null,
+    toolCalls: new Map(),
     terminal: false,
   };
+}
+
+export function recordToolStatus(context, status) {
+  context.toolCalls.set(status.toolCallId, status);
+  return `Using ${status.toolName}…`;
+}
+
+export function summarizeToolActivity(context) {
+  const calls = [...context.toolCalls.values()];
+  const failures = calls.filter((call) => call.isError === true).length;
+  return `${failures ? "⚠" : "✓"} Used ${calls.length} tool${
+    calls.length === 1 ? "" : "s"
+  }${failures ? ` · ${failures} failed` : ""}`;
 }
 
 export function isCurrentStream(context, activeContext, conversationId) {

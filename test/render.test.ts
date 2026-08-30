@@ -98,6 +98,11 @@ interface Renderers {
     assistantText: string;
     terminal: boolean;
   };
+  recordToolStatus(
+    context: unknown,
+    status: { toolCallId: string; toolName: string; isError?: boolean },
+  ): string;
+  summarizeToolActivity(context: unknown): string;
   isCurrentStream(
     context: unknown,
     activeContext: unknown,
@@ -271,6 +276,32 @@ test("stale stream contexts are ignored after conversation switching", async () 
   assert.equal(isCurrentStream(first, first, 1), true);
   assert.equal(isCurrentStream(first, second, 2), false);
   assert.equal(isCurrentStream(first, first, 2), false);
+});
+
+test("tool activity stays compact and summarizes unique calls", async () => {
+  const { createStreamContext, recordToolStatus, summarizeToolActivity } =
+    await renderer;
+  const context = createStreamContext(1);
+
+  assert.equal(
+    recordToolStatus(context, {
+      toolCallId: "search-1",
+      toolName: "web_search",
+    }),
+    "Using web_search…",
+  );
+  recordToolStatus(context, {
+    toolCallId: "search-1",
+    toolName: "web_search",
+  });
+  assert.equal(summarizeToolActivity(context), "✓ Used 1 tool");
+
+  recordToolStatus(context, {
+    toolCallId: "book-1",
+    toolName: "get_book",
+    isError: true,
+  });
+  assert.equal(summarizeToolActivity(context), "⚠ Used 2 tools · 1 failed");
 });
 
 test("stream terminal tracking distinguishes complete/error from abnormal EOF", async () => {

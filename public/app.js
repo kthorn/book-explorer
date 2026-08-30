@@ -2,15 +2,16 @@ import {
   createStreamContext,
   isCurrentStream,
   markStreamTerminal,
+  recordToolStatus,
   renderAssistantMessage,
   renderBookDetails,
-  renderCitation,
   renderConversationList,
   renderLibrary,
   renderMessage,
   renderProposal,
   renderRecommendationCard,
   streamNeedsIncomplete,
+  summarizeToolActivity,
 } from "./render.js";
 
 const csrfElement = document.getElementById("csrf-token");
@@ -90,7 +91,9 @@ async function jsonRequest(path, options = {}) {
   const method = options.method ?? "GET";
   const headers = {
     Accept: "application/json",
-    ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+    ...(options.body === undefined
+      ? {}
+      : { "content-type": "application/json" }),
     ...(method !== "GET" && method !== "HEAD" ? mutationHeaders() : {}),
     ...(options.headers ?? {}),
   };
@@ -139,7 +142,9 @@ async function streamRequest(path, body, onEvent) {
     } catch {
       payload = null;
     }
-    const failure = new Error(payload?.error?.message || "Unable to start stream");
+    const failure = new Error(
+      payload?.error?.message || "Unable to start stream",
+    );
     failure.error = payload?.error;
     failure.status = response.status;
     throw failure;
@@ -169,7 +174,9 @@ function parseSse(buffer, onEvent) {
     const data = block
       .split(/\r?\n/u)
       .filter((line) => line.startsWith("data:"))
-      .map((line) => line.startsWith("data: ") ? line.slice(6) : line.slice(5))
+      .map((line) =>
+        line.startsWith("data: ") ? line.slice(6) : line.slice(5),
+      )
       .join("\n");
     if (!data) continue;
     try {
@@ -185,7 +192,10 @@ function showView(view) {
   state.view = view;
   if (chatView) chatView.hidden = view !== "chat";
   if (libraryView) libraryView.hidden = view !== "library";
-  setText(viewTitle, view === "library" ? "Library" : state.conversation?.name || "Conversation");
+  setText(
+    viewTitle,
+    view === "library" ? "Library" : state.conversation?.name || "Conversation",
+  );
 }
 
 function setNavigationDisabled(disabled) {
@@ -199,19 +209,24 @@ function renderSidebar() {
   const target = byId("conversation-list");
   if (!target) return;
   clear(target);
-  append(target, renderConversationList(document, state.conversations, {
-    activeId: state.conversation?.id,
-    disabled: state.streaming,
-    onOpen: (conversation) => selectConversation(conversation.id),
-    onRename: (conversation) => renameConversation(conversation),
-    onArchive: (conversation) => archiveConversation(conversation),
-    onDelete: (conversation) => deleteConversation(conversation),
-  }));
+  append(
+    target,
+    renderConversationList(document, state.conversations, {
+      activeId: state.conversation?.id,
+      disabled: state.streaming,
+      onOpen: (conversation) => selectConversation(conversation.id),
+      onRename: (conversation) => renameConversation(conversation),
+      onArchive: (conversation) => archiveConversation(conversation),
+      onDelete: (conversation) => deleteConversation(conversation),
+    }),
+  );
 }
 
 async function loadConversations(selectFirst = true) {
   try {
-    const page = await jsonRequest("/api/conversations?archived=false&limit=100&offset=0");
+    const page = await jsonRequest(
+      "/api/conversations?archived=false&limit=100&offset=0",
+    );
     state.conversations = Array.isArray(page?.items) ? page.items : [];
     renderSidebar();
     if (selectFirst && !state.conversation && state.conversations[0]) {
@@ -256,7 +271,9 @@ async function renameConversation(conversation) {
     });
     await loadConversations(false);
     if (state.conversation?.id === conversation.id) {
-      state.conversation = state.conversations.find((item) => item.id === conversation.id) || state.conversation;
+      state.conversation =
+        state.conversations.find((item) => item.id === conversation.id) ||
+        state.conversation;
       showView(state.view);
     }
   } catch (error) {
@@ -272,7 +289,8 @@ async function archiveConversation(conversation) {
       method: "POST",
       body: { archived },
     });
-    if (state.conversation?.id === conversation.id && archived) state.conversation = null;
+    if (state.conversation?.id === conversation.id && archived)
+      state.conversation = null;
     await loadConversations(true);
   } catch (error) {
     toast(errorMessage(error));
@@ -283,7 +301,9 @@ async function deleteConversation(conversation) {
   if (state.streaming) return;
   if (!window.confirm(`Delete conversation "${conversation.name}"?`)) return;
   try {
-    await jsonRequest(`/api/conversations/${conversation.id}`, { method: "DELETE" });
+    await jsonRequest(`/api/conversations/${conversation.id}`, {
+      method: "DELETE",
+    });
     if (state.conversation?.id === conversation.id) state.conversation = null;
     await loadConversations(true);
   } catch (error) {
@@ -297,11 +317,14 @@ function renderTranscript() {
   const entries = state.conversation?.transcript;
   if (Array.isArray(entries)) {
     for (const entry of entries) {
-      append(transcript, renderMessage(document, {
-        role: entry?.role,
-        content: entry?.content,
-        incomplete: entry?.incomplete === true,
-      }));
+      append(
+        transcript,
+        renderMessage(document, {
+          role: entry?.role,
+          content: entry?.content,
+          incomplete: entry?.incomplete === true,
+        }),
+      );
     }
   }
   if (chatEmpty) chatEmpty.hidden = Boolean(entries?.length);
@@ -325,22 +348,32 @@ function currentStream(context) {
   return isCurrentStream(context, state.activeStream, state.conversation?.id);
 }
 
-function addStreamStatus(context, status) {
-  if (!currentStream(context) || !transcript) return;
-  const node = nodeWithText("p", "stream-status", `${status.toolName || "Assistant"}: ${status.status || "working"}`);
-  append(transcript, node);
+function updateToolActivity(context, text) {
+  if (!currentStream(context) || !context.activityNode) return;
+  setText(context.activityNode, text);
+}
+
+function finishToolActivity(context) {
+  if (!currentStream(context) || !context.activityNode) return;
+  setText(context.activityNode, summarizeToolActivity(context));
+  context.activityNode.className = "tool-activity";
 }
 
 function createAssistantOutput(context) {
   context.assistantNode = renderAssistantMessage(document, "", false);
   const wrapper = document.createElement("section");
   wrapper.className = "assistant-output";
-  append(wrapper, context.assistantNode);
-  context.citationNode = document.createElement("div");
-  context.citationNode.className = "stream-citations";
+  context.activityNode = nodeWithText(
+    "p",
+    "tool-activity tool-activity-working",
+    "Assistant is working…",
+  );
+  context.activityNode.setAttribute("role", "status");
+  context.activityNode.setAttribute("aria-live", "polite");
+  append(wrapper, context.activityNode, context.assistantNode);
   context.recommendationNode = document.createElement("div");
   context.recommendationNode.className = "stream-recommendations";
-  append(wrapper, context.citationNode, context.recommendationNode);
+  append(wrapper, context.recommendationNode);
   append(transcript, wrapper);
 }
 
@@ -348,47 +381,57 @@ function updateAssistant(context, incomplete = false) {
   if (!context.assistantNode) return;
   const parent = context.assistantNode.parentNode;
   if (!parent) return;
-  const replacement = renderAssistantMessage(document, context.assistantText, incomplete);
+  const replacement = renderAssistantMessage(
+    document,
+    context.assistantText,
+    incomplete,
+  );
   parent.replaceChild(replacement, context.assistantNode);
   context.assistantNode = replacement;
 }
 
-function addCitation(context, citation) {
-  if (!currentStream(context) || !context.citationNode) return;
-  const link = renderCitation(document, citation);
-  if (!link) return;
-  const item = document.createElement("p");
-  append(item, link);
-  append(context.citationNode, item);
-}
-
 function addRecommendations(context, recommendations) {
-  if (!currentStream(context) || !context.recommendationNode || !Array.isArray(recommendations)) return;
+  if (
+    !currentStream(context) ||
+    !context.recommendationNode ||
+    !Array.isArray(recommendations)
+  )
+    return;
   for (const recommendation of recommendations) {
     append(
       context.recommendationNode,
-      renderRecommendationCard(document, recommendation, { onAction: recommendationAction }),
+      renderRecommendationCard(document, recommendation, {
+        onAction: recommendationAction,
+      }),
     );
   }
 }
 
 function handleStreamEvent(event, context) {
-  if (!event || typeof event.type !== "string" || !currentStream(context) || context.terminal) return;
+  if (
+    !event ||
+    typeof event.type !== "string" ||
+    !currentStream(context) ||
+    context.terminal
+  )
+    return;
   if (event.type === "text_delta" && typeof event.delta === "string") {
     context.assistantText += event.delta;
     updateAssistant(context, false);
   } else if (event.type === "tool_status") {
-    addStreamStatus(context, event);
-  } else if (event.type === "citation") {
-    context.citations.push(event.citation);
-    addCitation(context, event.citation);
+    updateToolActivity(context, recordToolStatus(context, event));
   } else if (event.type === "complete") {
+    finishToolActivity(context);
     addRecommendations(context, event.recommendations);
     updateAssistant(context, event.incomplete === true);
     markStreamTerminal(context, event);
   } else if (event.type === "error") {
+    finishToolActivity(context);
     updateAssistant(context, event.incomplete === true);
-    append(transcript, nodeWithText("p", "stream-error", event.message || "Model turn failed"));
+    append(
+      transcript,
+      nodeWithText("p", "stream-error", event.message || "Model turn failed"),
+    );
     markStreamTerminal(context, event);
   }
 }
@@ -410,13 +453,18 @@ async function sendMessage(text) {
       (event) => handleStreamEvent(event, context),
     );
     if (currentStream(context) && streamNeedsIncomplete(context)) {
+      finishToolActivity(context);
       updateAssistant(context, true);
     }
     if (currentStream(context)) await loadProposals(conversationId);
   } catch (error) {
     if (currentStream(context)) {
+      finishToolActivity(context);
       if (streamNeedsIncomplete(context)) updateAssistant(context, true);
-      append(transcript, nodeWithText("p", "stream-error", errorMessage(error)));
+      append(
+        transcript,
+        nodeWithText("p", "stream-error", errorMessage(error)),
+      );
     }
   } finally {
     if (state.activeStream === context) {
@@ -485,7 +533,12 @@ async function loadLibrary() {
     state.books = Array.isArray(page?.items) ? page.items : [];
     const target = byId("library-list");
     clear(target);
-    append(target, renderLibrary(document, state.books, { onOpen: (book) => showBook(book.id) }));
+    append(
+      target,
+      renderLibrary(document, state.books, {
+        onOpen: (book) => showBook(book.id),
+      }),
+    );
   } catch (error) {
     toast(errorMessage(error));
   }
@@ -527,12 +580,21 @@ function renderBookEditor(book) {
   form.className = "book-editor";
   formField(form, "Title", "title", book.title);
   formField(form, "Author", "author", book.author);
-  formField(form, "Publication year", "publicationYear", book.publicationYear, "number");
+  formField(
+    form,
+    "Publication year",
+    "publicationYear",
+    book.publicationYear,
+    "number",
+  );
   formField(form, "Cover URL", "coverUrl", book.coverUrl);
   formField(form, "Series position", "seriesPosition", book.seriesPosition);
   selectField(form, "Series", "seriesId", book.seriesId, [
     { value: "", label: "None" },
-    ...state.series.map((series) => ({ value: String(series.id), label: series.name })),
+    ...state.series.map((series) => ({
+      value: String(series.id),
+      label: series.name,
+    })),
   ]);
   selectField(form, "Status", "status", book.status, [
     { value: "recommended", label: "Recommended" },
@@ -544,16 +606,26 @@ function renderBookEditor(book) {
   ]);
   selectField(form, "Rating", "rating", book.rating, [
     { value: "", label: "No rating" },
-    ...[1, 2, 3, 4, 5].map((rating) => ({ value: String(rating), label: String(rating) })),
+    ...[1, 2, 3, 4, 5].map((rating) => ({
+      value: String(rating),
+      label: String(rating),
+    })),
   ]);
   const identifierField = document.createElement("label");
   identifierField.className = "editor-field";
-  identifierField.appendChild(document.createTextNode("Identifiers (scheme | value | source, one per line)"));
+  identifierField.appendChild(
+    document.createTextNode(
+      "Identifiers (scheme | value | source, one per line)",
+    ),
+  );
   const identifiers = document.createElement("textarea");
   identifiers.name = "identifiers";
   identifiers.rows = 4;
   identifiers.value = (book.identifiers || [])
-    .map((identifier) => `${identifier.scheme} | ${identifier.value} | ${identifier.source}`)
+    .map(
+      (identifier) =>
+        `${identifier.scheme} | ${identifier.value} | ${identifier.source}`,
+    )
     .join("\n");
   identifierField.appendChild(identifiers);
   form.appendChild(identifierField);
@@ -572,7 +644,9 @@ function renderBookEditor(book) {
         .split(/\r?\n/u)
         .filter((line) => line.trim())
         .map((line) => {
-          const [scheme, identifierValue, ...sourceParts] = line.split("|").map((part) => part.trim());
+          const [scheme, identifierValue, ...sourceParts] = line
+            .split("|")
+            .map((part) => part.trim());
           const source = sourceParts.join("|");
           if (!scheme || !identifierValue || !source) {
             throw new Error("Each identifier must use scheme | value | source");
@@ -619,7 +693,9 @@ async function editNote(note) {
 async function deleteNote(note) {
   if (!window.confirm("Delete this note?")) return;
   try {
-    await jsonRequest(`/api/books/${note.bookId}/notes/${note.id}`, { method: "DELETE" });
+    await jsonRequest(`/api/books/${note.bookId}/notes/${note.id}`, {
+      method: "DELETE",
+    });
     await showBook(note.bookId);
   } catch (error) {
     toast(errorMessage(error));
@@ -627,14 +703,22 @@ async function deleteNote(note) {
 }
 
 async function recommendationAction(action, recommendation) {
-  if (action === "open") return showBook(recommendation.bookId || recommendation.book?.id);
-  const statuses = { interested: "interested", reading: "reading", not_interested: "not_interested" };
+  if (action === "open")
+    return showBook(recommendation.bookId || recommendation.book?.id);
+  const statuses = {
+    interested: "interested",
+    reading: "reading",
+    not_interested: "not_interested",
+  };
   const status = statuses[action];
   if (!status) return;
   const bookId = recommendation.bookId || recommendation.book?.id;
   if (!bookId) return;
   try {
-    await jsonRequest(`/api/books/${bookId}`, { method: "PATCH", body: { status } });
+    await jsonRequest(`/api/books/${bookId}`, {
+      method: "PATCH",
+      body: { status },
+    });
     await showBook(bookId);
     if (state.view === "library") await loadLibrary();
   } catch (error) {
@@ -646,28 +730,47 @@ async function showBook(bookOrId) {
   const id = typeof bookOrId === "object" ? bookOrId.id : bookOrId;
   if (!id) return;
   try {
-    const book = typeof bookOrId === "object" && bookOrId.notes ? bookOrId : await jsonRequest(`/api/books/${id}`);
+    const book =
+      typeof bookOrId === "object" && bookOrId.notes
+        ? bookOrId
+        : await jsonRequest(`/api/books/${id}`);
     clear(drawerContent);
-    append(drawerContent, renderBookDetails(document, book, {
-      onEdit: () => append(drawerContent, renderBookEditor(book)),
-      onEditNote: editNote,
-      onDeleteNote: deleteNote,
-    }));
+    append(
+      drawerContent,
+      renderBookDetails(document, book, {
+        onEdit: () => append(drawerContent, renderBookEditor(book)),
+        onEditNote: editNote,
+        onDeleteNote: deleteNote,
+      }),
+    );
     if (Array.isArray(book.identifiers) && book.identifiers.length) {
       const identifiers = document.createElement("section");
       identifiers.className = "book-identifiers";
       append(identifiers, nodeWithText("h3", null, "Identifiers"));
       for (const identifier of book.identifiers) {
-        append(identifiers, nodeWithText("p", null, `${identifier.scheme}: ${identifier.value}`));
+        append(
+          identifiers,
+          nodeWithText("p", null, `${identifier.scheme}: ${identifier.value}`),
+        );
       }
       append(drawerContent, identifiers);
     }
     if (Array.isArray(book.recommendations) && book.recommendations.length) {
       const recommendations = document.createElement("section");
       recommendations.className = "book-recommendations";
-      append(recommendations, nodeWithText("h3", null, "Recommendation history"));
+      append(
+        recommendations,
+        nodeWithText("h3", null, "Recommendation history"),
+      );
       for (const recommendation of book.recommendations) {
-        append(recommendations, renderRecommendationCard(document, { ...recommendation, book }, { onAction: recommendationAction }));
+        append(
+          recommendations,
+          renderRecommendationCard(
+            document,
+            { ...recommendation, book },
+            { onAction: recommendationAction },
+          ),
+        );
       }
       append(drawerContent, recommendations);
     }
@@ -680,15 +783,21 @@ async function showBook(bookOrId) {
 async function acceptProposal(proposal, edit = false) {
   let value = proposal.value;
   if (edit) {
-    const entered = window.prompt("Edit proposed value", value == null ? "" : String(value));
+    const entered = window.prompt(
+      "Edit proposed value",
+      value == null ? "" : String(value),
+    );
     if (entered == null) return;
     value = proposal.kind === "rating" ? Number(entered) : entered;
   }
   try {
-    await jsonRequest(`/api/conversations/${state.conversation.id}/proposals/${encodeURIComponent(proposal.proposalId)}/accept`, {
-      method: "POST",
-      body: { value },
-    });
+    await jsonRequest(
+      `/api/conversations/${state.conversation.id}/proposals/${encodeURIComponent(proposal.proposalId)}/accept`,
+      {
+        method: "POST",
+        body: { value },
+      },
+    );
     await loadProposals();
     await loadLibrary();
   } catch (error) {
@@ -698,10 +807,13 @@ async function acceptProposal(proposal, edit = false) {
 
 async function rejectProposal(proposal) {
   try {
-    await jsonRequest(`/api/conversations/${state.conversation.id}/proposals/${encodeURIComponent(proposal.proposalId)}/reject`, {
-      method: "POST",
-      body: {},
-    });
+    await jsonRequest(
+      `/api/conversations/${state.conversation.id}/proposals/${encodeURIComponent(proposal.proposalId)}/reject`,
+      {
+        method: "POST",
+        body: {},
+      },
+    );
     await loadProposals();
   } catch (error) {
     toast(errorMessage(error));
@@ -712,23 +824,34 @@ async function loadProposals(conversationId = state.conversation?.id) {
   if (!drawerContent) return;
   if (!conversationId) {
     clear(drawerContent);
-    append(drawerContent, nodeWithText("p", "empty-state", "Select a book or pending change."));
+    append(
+      drawerContent,
+      nodeWithText("p", "empty-state", "Select a book or pending change."),
+    );
     return;
   }
   try {
-    const proposals = await jsonRequest(`/api/conversations/${conversationId}/proposals`);
+    const proposals = await jsonRequest(
+      `/api/conversations/${conversationId}/proposals`,
+    );
     clear(drawerContent);
     if (!Array.isArray(proposals) || !proposals.length) {
-      append(drawerContent, nodeWithText("p", "empty-state", "No pending changes."));
+      append(
+        drawerContent,
+        nodeWithText("p", "empty-state", "No pending changes."),
+      );
       return;
     }
     append(drawerContent, nodeWithText("h3", null, "Pending changes"));
     for (const proposal of proposals) {
-      append(drawerContent, renderProposal(document, proposal, {
-        onAccept: (item) => acceptProposal(item),
-        onEdit: (item) => acceptProposal(item, true),
-        onReject: rejectProposal,
-      }));
+      append(
+        drawerContent,
+        renderProposal(document, proposal, {
+          onAccept: (item) => acceptProposal(item),
+          onEdit: (item) => acceptProposal(item, true),
+          onReject: rejectProposal,
+        }),
+      );
     }
   } catch (error) {
     toast(errorMessage(error));

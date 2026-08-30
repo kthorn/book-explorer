@@ -154,6 +154,31 @@ button {
   margin-top: 0.75rem;
 }
 
+.tool-activity {
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.tool-activity-working::before {
+  display: inline-block;
+  margin-right: 0.4rem;
+  content: "◌";
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-activity-working::before {
+    animation: none;
+  }
+}
+
 .message,
 .recommendation-card,
 .book-card,
