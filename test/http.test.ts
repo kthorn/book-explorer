@@ -106,7 +106,7 @@ class FakeTurns {
   }
 }
 
-function fixture(): Fixture {
+function fixture(options: { host?: string; origin?: string } = {}): Fixture {
   const root = mkdtempSync(join(tmpdir(), "book-explorer-http-"));
   const db = openDatabase(join(root, "library.sqlite"));
   const registry = new ConversationRegistry(db, {
@@ -143,6 +143,8 @@ function fixture(): Fixture {
     registry,
     openLibrary,
     turns,
+    ...(options.host === undefined ? {} : { host: options.host }),
+    ...(options.origin === undefined ? {} : { origin: options.origin }),
   });
   const conversationId = registry.create("HTTP").id;
   return {
@@ -323,6 +325,29 @@ test("HTTP route contract covers conversations, books, series, notes, and recomm
     assert.equal(updatedBook.status, 200);
     assert.deepEqual(updatedBook.body, item.library.getBook(bookId));
     assertNoCors(updatedBook.headers);
+    const replacedIdentifiers = await call(item, "PATCH", `/api/books/${bookId}`, {
+      identifiers: [
+        { scheme: "isbn13", value: "978-0-306-40615-7", source: "edited" },
+      ],
+    });
+    assert.equal(replacedIdentifiers.status, 200);
+    assert.deepEqual(
+      (replacedIdentifiers.body as { identifiers: unknown[] }).identifiers,
+      item.library.getBook(bookId)?.identifiers,
+    );
+    assert.equal(
+      (replacedIdentifiers.body as { identifiers: Array<{ value: string }> })
+        .identifiers[0]?.value,
+      "9780306406157",
+    );
+    const removedIdentifiers = await call(item, "PATCH", `/api/books/${bookId}`, {
+      identifiers: [],
+    });
+    assert.equal(removedIdentifiers.status, 200);
+    assert.deepEqual(
+      (removedIdentifiers.body as { identifiers: unknown[] }).identifiers,
+      [],
+    );
 
     const note = item.library.addNote(bookId, "Old note");
     const updatedNote = await call(item, "PATCH", `/api/books/${bookId}/notes/${note.id}`, {
@@ -619,6 +644,36 @@ test("HTTP proposal, Open Library, and message routes use service APIs", async (
   }
 });
 
+test("HTTP transcript marks persisted assistant stop reasons as incomplete", async () => {
+  const item = fixture();
+  await start(item);
+  try {
+    await item.registry.withConversation(item.conversationId, (manager) => {
+      for (const stopReason of ["aborted", "error", "length", "stop"]) {
+        manager.appendMessage({
+          role: "assistant",
+          content: [{ type: "text", text: stopReason }],
+          stopReason,
+        } as never);
+      }
+    });
+
+    const response = await call(
+      item,
+      "GET",
+      `/api/conversations/${item.conversationId}`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      (response.body as { transcript: Array<{ incomplete?: boolean }> })
+        .transcript.map((entry) => entry.incomplete === true),
+      [true, true, true, false],
+    );
+  } finally {
+    await stop(item);
+  }
+});
+
 test("HTTP sanitizes raw turn error messages before sending SSE", async () => {
   const item = fixture();
   await start(item);
@@ -774,6 +829,23 @@ test("HTTP state changes require exact Host, Origin, CSRF, and JSON content type
     other.registry.close();
     closeDatabase(other.db);
     rmSync(other.root, { recursive: true, force: true });
+  } finally {
+    await stop(item);
+  }
+});
+
+test("HTTP canonicalizes default HTTP ports for Host and Origin checks", async () => {
+  const item = fixture({ host: "127.0.0.1:80" });
+  await start(item);
+  try {
+    const response = await call(
+      item,
+      "POST",
+      "/api/conversations",
+      { name: "Canonical port" },
+      { host: "127.0.0.1", origin: "http://127.0.0.1" },
+    );
+    assert.equal(response.status, 201);
   } finally {
     await stop(item);
   }

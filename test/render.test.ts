@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { request as httpRequest } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { createHttpServer } from "../src/http.js";
@@ -168,6 +171,38 @@ test("static shell serves fixed assets with JSON CSRF data", async () => {
     assert.equal(missing.status, 404);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("static assets resolve relative to the module instead of the working directory", async () => {
+  const originalCwd = process.cwd();
+  const emptyCwd = mkdtempSync(join(tmpdir(), "book-explorer-static-"));
+  let server: ReturnType<typeof createHttpServer> | undefined;
+  try {
+    process.chdir(emptyCwd);
+    const module = await import(
+      new URL(`../src/http.js?static=${Date.now()}`, import.meta.url).href,
+    ) as typeof import("../src/http.js");
+    server = module.createHttpServer({
+      library: { searchBooks: () => ({}) },
+      registry: { list: () => [] },
+      openLibrary: { lookup: () => ({}) },
+      turns: { submit: async () => undefined, cancel: () => false },
+    } as never);
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", () => {
+        server!.off("error", reject);
+        resolve();
+      });
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    assert.equal((await get(address.port, "/")).status, 200);
+  } finally {
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    process.chdir(originalCwd);
+    rmSync(emptyCwd, { recursive: true, force: true });
   }
 });
 

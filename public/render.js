@@ -62,6 +62,7 @@ export function createStreamContext(conversationId) {
     assistantText: "",
     assistantNode: null,
     citationNode: null,
+    recommendationNode: null,
     citations: [],
     terminal: false,
   };

@@ -338,7 +338,9 @@ function createAssistantOutput(context) {
   append(wrapper, context.assistantNode);
   context.citationNode = document.createElement("div");
   context.citationNode.className = "stream-citations";
-  append(wrapper, context.citationNode);
+  context.recommendationNode = document.createElement("div");
+  context.recommendationNode.className = "stream-recommendations";
+  append(wrapper, context.citationNode, context.recommendationNode);
   append(transcript, wrapper);
 }
 
@@ -360,6 +362,16 @@ function addCitation(context, citation) {
   append(context.citationNode, item);
 }
 
+function addRecommendations(context, recommendations) {
+  if (!currentStream(context) || !context.recommendationNode || !Array.isArray(recommendations)) return;
+  for (const recommendation of recommendations) {
+    append(
+      context.recommendationNode,
+      renderRecommendationCard(document, recommendation, { onAction: recommendationAction }),
+    );
+  }
+}
+
 function handleStreamEvent(event, context) {
   if (!event || typeof event.type !== "string" || !currentStream(context) || context.terminal) return;
   if (event.type === "text_delta" && typeof event.delta === "string") {
@@ -371,6 +383,7 @@ function handleStreamEvent(event, context) {
     context.citations.push(event.citation);
     addCitation(context, event.citation);
   } else if (event.type === "complete") {
+    addRecommendations(context, event.recommendations);
     updateAssistant(context, event.incomplete === true);
     markStreamTerminal(context, event);
   } else if (event.type === "error") {
@@ -533,6 +546,17 @@ function renderBookEditor(book) {
     { value: "", label: "No rating" },
     ...[1, 2, 3, 4, 5].map((rating) => ({ value: String(rating), label: String(rating) })),
   ]);
+  const identifierField = document.createElement("label");
+  identifierField.className = "editor-field";
+  identifierField.appendChild(document.createTextNode("Identifiers (scheme | value | source, one per line)"));
+  const identifiers = document.createElement("textarea");
+  identifiers.name = "identifiers";
+  identifiers.rows = 4;
+  identifiers.value = (book.identifiers || [])
+    .map((identifier) => `${identifier.scheme} | ${identifier.value} | ${identifier.source}`)
+    .join("\n");
+  identifierField.appendChild(identifiers);
+  form.appendChild(identifierField);
   const save = nodeWithText("button", "button button-primary", "Save book");
   save.type = "submit";
   form.appendChild(save);
@@ -544,6 +568,17 @@ function renderBookEditor(book) {
     const seriesId = value("seriesId");
     const rating = value("rating");
     try {
+      const identifiers = value("identifiers")
+        .split(/\r?\n/u)
+        .filter((line) => line.trim())
+        .map((line) => {
+          const [scheme, identifierValue, ...sourceParts] = line.split("|").map((part) => part.trim());
+          const source = sourceParts.join("|");
+          if (!scheme || !identifierValue || !source) {
+            throw new Error("Each identifier must use scheme | value | source");
+          }
+          return { scheme, value: identifierValue, source };
+        });
       const updated = await jsonRequest(`/api/books/${book.id}`, {
         method: "PATCH",
         body: {
@@ -555,6 +590,7 @@ function renderBookEditor(book) {
           seriesPosition: value("seriesPosition") || null,
           status: value("status"),
           rating: rating ? Number(rating) : null,
+          identifiers,
         },
       });
       await showBook(updated.id);

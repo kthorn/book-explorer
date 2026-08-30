@@ -148,6 +148,12 @@ button {
   gap: 1rem;
 }
 
+.stream-recommendations {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
 .message,
 .recommendation-card,
 .book-card,

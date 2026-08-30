@@ -171,12 +171,13 @@ function coordinator(
   item: Fixture,
   driver: Driver,
   requestIds: string[] = ["request-1", "request-2", "request-3"],
+  runtime = runtimeFixture(),
 ): TurnCoordinator {
   let index = 0;
   return new TurnCoordinator({
     registry: item.registry,
     library: item.library,
-    runtime: runtimeFixture(),
+    runtime,
     requestIdFactory: () => requestIds[index++] ?? `request-${index}`,
     sessionFactory: async (
       tools: readonly ToolDefinition[],
@@ -395,6 +396,128 @@ test("turn retry reuses the request UUID and committed recommendation survives m
     assert.equal((content.match(/book-explorer-request/g) ?? []).length, 2);
     assert.equal((content.match(/book-explorer-retry/g) ?? []).length, 1);
     assert.match(content, /request-retry/);
+  } finally {
+    dispose(item);
+  }
+});
+
+test("turn rejects a retry request marker from another conversation", async () => {
+  const item = fixture();
+  const driver = driverFixture();
+  try {
+    await item.registry.append(item.conversations[1], "book-explorer-request", {
+      requestId: "foreign-request",
+    });
+    const service = coordinator(item, driver, ["unused"]);
+    const events = await collectSubmit(
+      service,
+      item.conversations[0],
+      "retry",
+      { retryRequestId: "foreign-request" },
+    );
+
+    assert.deepEqual(events, [
+      {
+        type: "error",
+        code: "invalid_retry_request",
+        message: "Retry request does not belong to this conversation",
+        retryable: false,
+        incomplete: false,
+      },
+    ]);
+    assert.deepEqual(driver.promptTexts, []);
+  } finally {
+    dispose(item);
+  }
+});
+
+test("library-only mode reports a stable restart-required stream error", async () => {
+  const item = fixture();
+  const driver = driverFixture();
+  try {
+    const unavailableRuntime = runtimeFixture() as {
+      model?: unknown;
+      libraryOnlyReason?: string;
+    };
+    unavailableRuntime.model = undefined;
+    unavailableRuntime.libraryOnlyReason = "offline";
+    const service = coordinator(item, driver, ["unused"], unavailableRuntime as never);
+    const events = await collectSubmit(service, item.conversations[0]);
+
+    assert.deepEqual(events, [
+      {
+        type: "error",
+        code: "model_unavailable",
+        message: "Model is unavailable. Restart Book Explorer after model access is restored.",
+        retryable: false,
+        incomplete: false,
+      },
+    ]);
+    assert.deepEqual(driver.promptTexts, []);
+  } finally {
+    dispose(item);
+  }
+});
+
+test("turn completes with request-scoped recommendations without adding stream event types", async () => {
+  const item = fixture();
+  let bookId = 0;
+  const driver = driverFixture(async (session) => {
+    const tools = driver.tools;
+    assert.ok(tools);
+    const bookResult = await tools
+      .find((tool) => tool.name === "upsert_book")!
+      .execute(
+        "book-call",
+        { title: "Inline Book", author: "Author" } as never,
+        undefined,
+        undefined,
+        {} as never,
+      );
+    const book = (bookResult.details as { ok: true; data: { id: number } }).data;
+    bookId = book.id;
+    const recommendationResult = await tools
+      .find((tool) => tool.name === "record_recommendation")!
+      .execute(
+        "recommendation-call",
+        { bookId: book.id, rationale: "A request-scoped recommendation." } as never,
+        undefined,
+        undefined,
+        {} as never,
+      );
+    session.emit({
+      type: "tool_execution_end",
+      toolCallId: "recommendation-call",
+      toolName: "record_recommendation",
+      result: recommendationResult,
+      isError: false,
+    } as never);
+    session.emit({ type: "agent_end", messages: [], willRetry: false });
+  });
+  try {
+    const service = coordinator(item, driver, ["request-recommendation"]);
+    const events = await collectSubmit(service, item.conversations[0]);
+
+    assert.deepEqual(events.map((event) => event.type), [
+      "tool_status",
+      "complete",
+    ]);
+    const complete = events.at(-1);
+    assert.equal(complete?.type, "complete");
+    if (complete?.type === "complete") {
+      const recommendations = (
+        complete as typeof complete & {
+          recommendations?: Array<{
+            rationale: string;
+            book: { id: number; title: string };
+          }>;
+        }
+      ).recommendations;
+      assert.equal(recommendations?.length, 1);
+      assert.equal(recommendations?.[0]?.rationale, "A request-scoped recommendation.");
+      assert.equal(recommendations?.[0]?.book.id, bookId);
+      assert.equal(recommendations?.[0]?.book.title, "Inline Book");
+    }
   } finally {
     dispose(item);
   }

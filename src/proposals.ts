@@ -262,6 +262,10 @@ function latestApplying(decisions: ProposalDecision[] | undefined): ProposalDeci
   return undefined;
 }
 
+function firstApplying(decisions: ProposalDecision[] | undefined): ProposalDecision | undefined {
+  return decisions?.find((decision) => decision.state === 'applying');
+}
+
 function pendingFromEntries(manager: ProposalSession, conversation: Conversation): PendingProposal[] {
   const { proposals, decisions } = inspectEntries(manager.getEntries(), conversation.id);
   const pending: PendingProposal[] = [];
@@ -450,12 +454,12 @@ export function acceptProposal(...args: unknown[]): Promise<ProposalResult> {
       };
     }
 
-    const applying = latestApplying(proposalDecisions);
+    const applying = firstApplying(proposalDecisions);
     const value = normalizeProposalValue(
       proposal.kind,
-      parsed.hasEditedValue ? parsed.editedValue : applying?.value ?? proposal.value,
+      applying?.value ?? (parsed.hasEditedValue ? parsed.editedValue : proposal.value),
     );
-    if (!applying || parsed.hasEditedValue) {
+    if (!applying) {
       manager.appendCustomEntry(PROPOSAL_DECISION_CUSTOM_TYPE, {
         proposalId: proposal.proposalId,
         state: 'applying',

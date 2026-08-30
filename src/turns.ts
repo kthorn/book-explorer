@@ -14,7 +14,11 @@ import {
   type Conversation,
   type ConversationRegistry,
 } from "./conversations.js";
-import type { LibraryRepository } from "./library.js";
+import type {
+  Book,
+  LibraryRepository,
+  Recommendation,
+} from "./library.js";
 import type { ProposalRegistry, ProposalSession } from "./proposals.js";
 import {
   createCitationCapture,
@@ -47,9 +51,14 @@ export interface BrowserCitationEvent {
   citation: CapturedCitation;
 }
 
+interface BrowserRecommendation extends Recommendation {
+  book: Book;
+}
+
 export interface BrowserCompleteEvent {
   type: "complete";
   incomplete: boolean;
+  recommendations?: BrowserRecommendation[];
 }
 
 export interface BrowserErrorEvent {
@@ -67,6 +76,8 @@ export type BrowserErrorCode =
   | "quota_error"
   | "concurrency_error"
   | "search_error"
+  | "invalid_retry_request"
+  | "model_unavailable"
   | "internal_error";
 
 export type BrowserStreamEvent =
@@ -131,6 +142,15 @@ class TurnCancelledError extends Error {
   }
 }
 
+class InvalidRetryRequestError extends Error {
+  readonly code = "invalid_retry_request";
+
+  constructor() {
+    super("Retry request does not belong to this conversation");
+    this.name = "InvalidRetryRequestError";
+  }
+}
+
 type ActiveRequestPhase = "running" | "settling" | "terminal";
 
 interface ActiveRequest {
@@ -149,6 +169,7 @@ interface ActiveRequest {
   modelCompleted: boolean;
   toolFailure?: unknown;
   citationTokens?: Set<string>;
+  recommendations?: BrowserRecommendation[];
   session?: AgentSessionLike;
   unsubscribe?: () => void;
   abortPromise?: Promise<void>;
@@ -197,6 +218,9 @@ function classifyError(error: unknown): {
 } {
   if (error instanceof TurnCancelledError) {
     return { code: "cancelled", retryable: true };
+  }
+  if (error instanceof InvalidRetryRequestError) {
+    return { code: "invalid_retry_request", retryable: false };
   }
   const status = errorStatus(error);
   const code = errorCode(error);
@@ -280,6 +304,23 @@ function failureFromToolResult(result: unknown): Error {
 function assistantFailure(message: unknown): Error {
   const value = assistantRecord(message);
   return new Error(stringValue(value?.errorMessage) ?? "Model turn failed");
+}
+
+function recommendationFromToolResult(
+  result: unknown,
+): Recommendation | undefined {
+  const details = record(record(result)?.details);
+  if (details?.ok !== true) return undefined;
+  const recommendation = record(details.data);
+  if (
+    !recommendation ||
+    !Number.isSafeInteger(recommendation.id) ||
+    !Number.isSafeInteger(recommendation.bookId)
+  ) {
+    return undefined;
+  }
+  // SAFETY: record_recommendation returns the repository's validated Recommendation envelope.
+  return recommendation as unknown as Recommendation;
 }
 
 function lastAssistant(messages: unknown): Record<string, unknown> | undefined {
@@ -380,6 +421,16 @@ export class TurnCoordinator {
         retryable: true,
       });
     }
+    if (!this.runtime.model || this.runtime.libraryOnlyReason) {
+      return emit({
+        type: "error",
+        code: "model_unavailable",
+        message:
+          "Model is unavailable. Restart Book Explorer after model access is restored.",
+        retryable: false,
+        incomplete: false,
+      });
+    }
 
     const requestId = input.retryRequestId ?? this.requestIdFactory();
     const active: ActiveRequest = {
@@ -419,6 +470,17 @@ export class TurnCoordinator {
         active.conversationId,
         async (manager, conversation) => {
           try {
+            if (
+              input.retryRequestId !== undefined &&
+              !manager.getEntries().some(
+                (entry) =>
+                  entry.type === "custom" &&
+                  entry.customType === "book-explorer-request" &&
+                  record(entry.data)?.requestId === input.retryRequestId,
+              )
+            ) {
+              throw new InvalidRetryRequestError();
+            }
             manager.appendCustomEntry("book-explorer-request", {
               requestId: active.requestId,
             });
@@ -498,6 +560,9 @@ export class TurnCoordinator {
                 {
                   type: "complete",
                   incomplete: active.incomplete,
+                  ...(active.recommendations?.length
+                    ? { recommendations: active.recommendations }
+                    : {}),
                 },
                 emit,
               );
@@ -593,8 +658,21 @@ export class TurnCoordinator {
     } else if (event.type === "tool_execution_end") {
       const status = statusEvent(event, "completed");
       if (status) await this.deliver(active, status, emit);
-      if (event.isError === true)
+      if (event.isError === true) {
         active.toolFailure = failureFromToolResult(event.result);
+      } else if (event.toolName === "record_recommendation") {
+        const recommendation = recommendationFromToolResult(event.result);
+        const book = recommendation && this.library.getBook(recommendation.bookId);
+        if (
+          recommendation &&
+          book &&
+          !active.recommendations?.some(
+            (item) => item.id === recommendation.id,
+          )
+        ) {
+          (active.recommendations ??= []).push({ ...recommendation, book });
+        }
+      }
     } else if (event.type === "message_end" || event.type === "turn_end") {
       const reason = stopReason(event.message);
       if (reason === "length") active.incomplete = true;

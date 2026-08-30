@@ -141,11 +141,19 @@ export const LIBRARY_SQL = {
   insertIdentifier: `
     INSERT OR IGNORE INTO book_identifiers (book_id, scheme, value, source)
     VALUES (?, ?, ?, ?)`,
+  insertReplacementIdentifier: `
+    INSERT INTO book_identifiers (book_id, scheme, value, source)
+    VALUES (?, ?, ?, ?)`,
+  deleteIdentifiers: "DELETE FROM book_identifiers WHERE book_id = ?",
   selectIdentifiers: `
     SELECT id, book_id, scheme, value, source, created_at
     FROM book_identifiers
     WHERE book_id = ?
     ORDER BY id`,
+  touchBook: `
+    UPDATE books
+    SET updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
   updateBookTitle: `
     UPDATE books
     SET title = ?, normalized_title = ?, updated_at = CURRENT_TIMESTAMP

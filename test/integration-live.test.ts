@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import { startApplication } from "../src/main.js";
@@ -16,8 +18,10 @@ test(
     skip: !live,
   },
   async () => {
-    const application = await startApplication({ port: 0 });
+    const dataDir = mkdtempSync(join(tmpdir(), "book-explorer-live-"));
+    let application: Awaited<ReturnType<typeof startApplication>> | undefined;
     try {
+      application = await startApplication({ port: 0, dataDir });
       assert.equal(application.runtime.oauthReady, true);
       assert.equal(
         `${application.runtime.model?.provider}/${application.runtime.model?.id}`,
@@ -46,9 +50,18 @@ test(
       const cliPath =
         process.env.PI_CLI_PATH ??
         resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
-      const child = spawn(process.execPath, [cliPath, "--version"], {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const child = spawn(
+        process.execPath,
+        [cliPath, "auth", "check", "--provider", "openai-codex"],
+        {
+          cwd: dataDir,
+          env: {
+            ...process.env,
+            PI_CODING_AGENT_DIR: dirname(application.paths.authPath),
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       const refresh = application.runtime.runtime.refresh({
         allowNetwork: true,
         providers: ["openai-codex"],
@@ -85,7 +98,8 @@ test(
       assert.ok(events.some((event) => event.type === "citation"));
       assert.ok(events.some((event) => event.type === "complete"));
     } finally {
-      await application.shutdown();
+      await application?.shutdown();
+      rmSync(dataDir, { recursive: true, force: true });
     }
   },
 );

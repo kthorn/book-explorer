@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createServer,
   type IncomingMessage,
@@ -58,7 +59,9 @@ const MAX_MESSAGE_LENGTH = 100_000;
 const MAX_REQUEST_ID_LENGTH = 200;
 const CSRF_HEADER = "x-csrf-token";
 const CSRF_MARKER = "__BOOK_EXPLORER_CSRF_TOKEN__";
-const PUBLIC_DIRECTORY = join(process.cwd(), "public");
+const PUBLIC_DIRECTORY = fileURLToPath(
+  new URL("../../public/", import.meta.url),
+);
 const STATIC_FILES: Readonly<Record<string, { file: string; type: string }>> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/index.html": { file: "index.html", type: "text/html; charset=utf-8" },
@@ -238,6 +241,20 @@ function requiredBodyValue<T>(value: Record<string, unknown>, key: string): T {
   return value[key] as T;
 }
 
+function validateIdentifiers(value: unknown): void {
+  if (!Array.isArray(value))
+    throw new ValidationError("Identifiers must be an array");
+  if (value.length > 20)
+    throw new ValidationError("At most 20 identifiers are allowed");
+  for (const identifier of value) {
+    const item = objectBody(identifier);
+    allowedKeys(item, ["scheme", "value", "source"]);
+    requiredBodyValue(item, "scheme");
+    requiredBodyValue(item, "value");
+    requiredBodyValue(item, "source");
+  }
+}
+
 function validateBookCreateBody(body: unknown): CreateBookInput {
   const value = objectBody(body);
   allowedKeys(value, [
@@ -251,19 +268,7 @@ function validateBookCreateBody(body: unknown): CreateBookInput {
   ]);
   requiredBodyValue(value, "title");
   requiredBodyValue(value, "author");
-  if (value.identifiers !== undefined) {
-    if (!Array.isArray(value.identifiers))
-      throw new ValidationError("Identifiers must be an array");
-    if (value.identifiers.length > 20)
-      throw new ValidationError("At most 20 identifiers are allowed");
-    for (const identifier of value.identifiers) {
-      const item = objectBody(identifier);
-      allowedKeys(item, ["scheme", "value", "source"]);
-      requiredBodyValue(item, "scheme");
-      requiredBodyValue(item, "value");
-      requiredBodyValue(item, "source");
-    }
-  }
+  if (value.identifiers !== undefined) validateIdentifiers(value.identifiers);
   // SAFETY: allowedKeys and the repository's schema validate this object before use.
   return value as unknown as CreateBookInput;
 }
@@ -279,7 +284,9 @@ function validateBookUpdateBody(body: unknown): BookUpdateInput {
     "seriesPosition",
     "status",
     "rating",
+    "identifiers",
   ]);
+  if (value.identifiers !== undefined) validateIdentifiers(value.identifiers);
   // SAFETY: allowedKeys and LibraryRepository.updateBook perform field validation.
   return value as unknown as BookUpdateInput;
 }
@@ -739,16 +746,18 @@ function addressHost(server: Server): string | undefined {
 }
 
 function expectedHost(server: Server, configured?: string): string {
-  if (configured !== undefined) {
-    const socketHost = addressHost(server);
-    if (socketHost && configured === "127.0.0.1") return socketHost;
-    return configured;
-  }
-  return addressHost(server) ?? "127.0.0.1";
+  const socketHost = addressHost(server);
+  const host =
+    configured === undefined
+      ? socketHost ?? "127.0.0.1"
+      : socketHost && configured === "127.0.0.1"
+        ? socketHost
+        : configured;
+  return new URL(`http://${host}`).host;
 }
 
 function expectedOrigin(deps: ResolvedDependencies, host: string): string {
-  return deps.origin ?? `http://${host}`;
+  return new URL(deps.origin ?? `http://${host}`).origin;
 }
 
 function isStateChangingMethod(method: string): boolean {
@@ -809,7 +818,13 @@ function displayableTranscript(manager: {
     timestamp: string;
     message?: unknown;
   }>;
-}): Array<{ id: string; timestamp: string; role: string; content: unknown }> {
+}): Array<{
+  id: string;
+  timestamp: string;
+  role: string;
+  content: unknown;
+  incomplete: boolean;
+}> {
   const entries = manager.getBranch?.() ?? manager.getEntries?.() ?? [];
   return entries.flatMap((entry) => {
     if (entry.type !== "message" || !isRecord(entry.message)) return [];
@@ -821,6 +836,11 @@ function displayableTranscript(manager: {
         timestamp: entry.timestamp,
         role,
         content: entry.message.content,
+        incomplete:
+          role === "assistant" &&
+          (entry.message.stopReason === "aborted" ||
+            entry.message.stopReason === "error" ||
+            entry.message.stopReason === "length"),
       },
     ];
   });

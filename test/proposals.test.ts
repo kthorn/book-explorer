@@ -124,6 +124,81 @@ test('reapplies an applying proposal after a crash before its database effect', 
   }
 });
 
+test('freezes the first applying value when a retry supplies a different edit', async () => {
+  const item = fixture();
+  try {
+    const created = await proposal(item);
+    await item.registry.withConversation(item.conversationId, (manager: SessionManager) => {
+      manager.appendCustomEntry('book-explorer-proposal-decision', {
+        proposalId: created.id,
+        state: 'applying',
+        value: 'read',
+      });
+    });
+
+    const accepted = await acceptProposal(
+      item.registry,
+      item.library,
+      item.conversationId,
+      created.id,
+      'abandoned',
+    );
+
+    assert.equal(accepted.value, 'read');
+    assert.equal(item.library.getBook(item.bookId)?.status, 'read');
+    const entries = await item.registry.withConversation(item.conversationId, (manager: SessionManager) => manager.getEntries());
+    const decisions = entries.filter((entry: SessionEntry) => entry.type === 'custom' && entry.customType === 'book-explorer-proposal-decision');
+    assert.deepEqual(decisions.map((entry: SessionEntry) => entry.type === 'custom' ? entry.data : undefined), [
+      { proposalId: created.id, state: 'applying', value: 'read' },
+      { proposalId: created.id, state: 'accepted', value: 'read' },
+    ]);
+  } finally {
+    dispose(item);
+  }
+});
+
+test('recovery keeps a persisted note aligned with its first applying value', async () => {
+  const item = fixture();
+  try {
+    const created = await createProposal(item.registry, item.conversationId, {
+      requestId: 'request-note-recovery',
+      bookId: item.bookId,
+      kind: 'note',
+      value: 'Original opinion.',
+      semanticSlot: 'opinion',
+      explanation: 'The user shared an opinion.',
+    });
+    await item.registry.withConversation(item.conversationId, (manager: SessionManager) => {
+      manager.appendCustomEntry('book-explorer-proposal-decision', {
+        proposalId: created.id,
+        state: 'applying',
+        value: 'Original opinion.',
+      });
+    });
+    item.library.addNote(item.bookId, 'Original opinion.', item.conversationId, created.id);
+
+    const accepted = await acceptProposal(
+      item.registry,
+      item.library,
+      item.conversationId,
+      created.id,
+      'Changed retry opinion.',
+    );
+
+    assert.equal(accepted.value, 'Original opinion.');
+    assert.equal(accepted.note?.note, 'Original opinion.');
+    const entries = await item.registry.withConversation(item.conversationId, (manager: SessionManager) => manager.getEntries());
+    const terminal = entries.filter((entry: SessionEntry) => entry.type === 'custom' && entry.customType === 'book-explorer-proposal-decision').at(-1);
+    assert.deepEqual(terminal?.type === 'custom' ? terminal.data : undefined, {
+      proposalId: created.id,
+      state: 'accepted',
+      value: 'Original opinion.',
+    });
+  } finally {
+    dispose(item);
+  }
+});
+
 test('recovers when the terminal append fails after the SQLite commit', async () => {
   const item = fixture();
   try {

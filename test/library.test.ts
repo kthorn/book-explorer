@@ -114,6 +114,37 @@ test('reuses a book by exact identifier and fills only missing metadata', () => 
   });
 });
 
+test('user updates replace and remove validated identifiers', () => {
+  withDatabase((_db, library) => {
+    const book = library.createOrFindBook({
+      title: 'Book',
+      author: 'Author',
+      identifiers: [{ scheme: 'isbn13', value: '9780306406157', source: 'catalog' }],
+    });
+
+    const replaced = library.updateBook(book.id, {
+      identifiers: [{ scheme: 'openlibrary_work', value: '/works/ol123w', source: 'edited' }],
+    } as never, 'user');
+    assert.deepEqual(replaced?.identifiers.map((identifier) => ({
+      scheme: identifier.scheme,
+      value: identifier.value,
+      source: identifier.source,
+    })), [{ scheme: 'openlibrary_work', value: 'OL123W', source: 'edited' }]);
+
+    assert.throws(
+      () => library.updateBook(book.id, {
+        identifiers: [{ scheme: 'isbn13', value: 'not-an-isbn', source: 'edited' }],
+      } as never, 'user'),
+      /ISBN/,
+    );
+    assert.equal(library.getBook(book.id)?.identifiers[0]?.value, 'OL123W');
+    assert.deepEqual(
+      library.updateBook(book.id, { identifiers: [] } as never, 'user')?.identifiers,
+      [],
+    );
+  });
+});
+
 test('reports ambiguous normalized title and author candidates without merging them', () => {
   withDatabase((db, library) => {
     const first = library.createOrFindBook({

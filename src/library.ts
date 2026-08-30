@@ -47,6 +47,7 @@ export interface BookUpdateInput {
   seriesPosition?: string | null;
   status?: ReadingStatus;
   rating?: number | null;
+  identifiers?: readonly BookIdentifierInput[] | null;
 }
 
 export type BookUpdateSource = 'agent' | 'user';
@@ -194,6 +195,7 @@ type NormalizedBookUpdate = Partial<{
   seriesPosition: string | null;
   status: ReadingStatus;
   rating: number | null;
+  identifiers: NormalizedIdentifier[];
 }>;
 type NormalizedCitation = {
   url: string;
@@ -381,6 +383,9 @@ function normalizeBookUpdate(input: BookUpdateInput): NormalizedBookUpdate {
   if ('seriesPosition' in input) update.seriesPosition = optionalText(input.seriesPosition, 'Series position', 40);
   if ('status' in input) update.status = optionalStatus(input.status);
   if ('rating' in input) update.rating = optionalRating(input.rating);
+  if ('identifiers' in input && input.identifiers !== undefined) {
+    update.identifiers = normalizeIdentifiers(input.identifiers);
+  }
   return update;
 }
 
@@ -631,6 +636,7 @@ export class LibraryRepository {
       delete update.author;
       delete update.status;
       delete update.rating;
+      delete update.identifiers;
     }
     if (update.seriesId !== undefined && update.seriesId !== null) this.requireSeries(update.seriesId);
 
@@ -674,6 +680,14 @@ export class LibraryRepository {
         }
         if (update.rating !== undefined) {
           this.db.prepare(LIBRARY_SQL.updateBookRating).run(update.rating, id);
+        }
+        if (update.identifiers !== undefined) {
+          this.db.prepare(LIBRARY_SQL.deleteIdentifiers).run(id);
+          const insert = this.db.prepare(LIBRARY_SQL.insertReplacementIdentifier);
+          for (const identifier of update.identifiers) {
+            insert.run(id, identifier.scheme, identifier.value, identifier.source);
+          }
+          this.db.prepare(LIBRARY_SQL.touchBook).run(id);
         }
       }
       return this.requireBook(id);
