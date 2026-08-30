@@ -510,10 +510,12 @@ function errorEnvelope(error: unknown): ToolFailure {
 function toolResult<T>(envelope: ToolEnvelope<T>): {
   content: [{ type: "text"; text: string }];
   details: ToolEnvelope<T>;
+  isError: boolean;
 } {
   return {
     content: [{ type: "text", text: JSON.stringify(envelope) }],
     details: envelope,
+    isError: !envelope.ok,
   };
 }
 

@@ -76,18 +76,26 @@ function tool(item: Fixture, name: string): ToolDefinition {
   return found;
 }
 
-async function execute(
+async function executeResult(
   item: Fixture,
   name: string,
   input: unknown,
-): Promise<ToolEnvelope<unknown>> {
-  const result = await tool(item, name).execute(
+) {
+  return tool(item, name).execute(
     "call-1",
     input as never,
     undefined,
     undefined,
     {} as never,
   );
+}
+
+async function execute(
+  item: Fixture,
+  name: string,
+  input: unknown,
+): Promise<ToolEnvelope<unknown>> {
+  const result = await executeResult(item, name, input);
   return result.details as ToolEnvelope<unknown>;
 }
 
@@ -326,6 +334,17 @@ test("tool handlers validate before database actions and reject direct user-owne
   }
 });
 
+test("failed tool results set isError while preserving the error envelope", async () => {
+  const item = fixture();
+  try {
+    const result = await executeResult(item, "get_book", { bookId: 0 });
+    assert.equal((result as { isError?: boolean }).isError, true);
+    assertFailure(result.details as ToolEnvelope<unknown>, "invalid_input");
+  } finally {
+    dispose(item);
+  }
+});
+
 test("tool effects use the real repository and return the standard success envelope", async () => {
   const item = fixture();
   try {
@@ -437,6 +456,20 @@ test("record_recommendation captures only request-local citation tokens and is i
       citationTokens: ["citation_unknown"],
     });
     assertFailure(unknown, "invalid_input");
+    assert.equal(item.library.getBook(book.id)?.recommendations.length, 1);
+
+    item.capture.set("citation_wrong_provider", {
+      url: "https://example.test/other",
+      title: "Other",
+      snippet: "Not an OpenAI citation",
+      provider: "other",
+    });
+    const wrongProvider = await execute(item, "record_recommendation", {
+      bookId: book.id,
+      rationale: "Do not save this either.",
+      citationTokens: ["citation_wrong_provider"],
+    });
+    assertFailure(wrongProvider, "invalid_input");
     assert.equal(item.library.getBook(book.id)?.recommendations.length, 1);
   } finally {
     dispose(item);
