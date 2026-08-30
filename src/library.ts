@@ -563,7 +563,13 @@ export class LibraryRepository {
       if (existing) {
         const id = numberValue(rowValue(existing, 'id'));
         this.fillMissingBookFields(id, existing, book);
-        this.insertIdentifiers(id, book.identifiers);
+        const owners = this.insertIdentifiersAndFindOwners(id, book.identifiers);
+        const conflictingOwners = [...owners.values()].filter(
+          (owner) => numberValue(rowValue(owner, 'id')) !== id,
+        );
+        if (conflictingOwners.length > 0) {
+          throw new AmbiguousBookError([existing, ...conflictingOwners].map(mapCandidate));
+        }
         return this.requireBook(id);
       }
 
@@ -578,7 +584,16 @@ export class LibraryRepository {
         book.seriesPosition ?? null,
       );
       const id = numberValue(result.lastInsertRowid);
-      this.insertIdentifiers(id, book.identifiers);
+      const owners = this.insertIdentifiersAndFindOwners(id, book.identifiers);
+      if (owners.size > 1) throw new AmbiguousBookError([...owners.values()].map(mapCandidate));
+      const owner = owners.values().next().value as Row | undefined;
+      if (owner && numberValue(rowValue(owner, 'id')) !== id) {
+        const ownerId = numberValue(rowValue(owner, 'id'));
+        this.db.prepare(LIBRARY_SQL.deleteBook).run(id);
+        this.fillMissingBookFields(ownerId, owner, book);
+        this.insertIdentifiersAndFindOwners(ownerId, book.identifiers);
+        return this.requireBook(ownerId);
+      }
       return this.requireBook(id);
     });
   }
@@ -823,6 +838,11 @@ export class LibraryRepository {
         text,
         cautionText,
       );
+      if (result.changes === 0) {
+        const winner = this.db.prepare(LIBRARY_SQL.selectRecommendationByRequest).get(request, id) as Row | undefined;
+        if (!winner) throw new Error('Recommendation insert was ignored without an existing row');
+        return this.requireRecommendation(numberValue(rowValue(winner, 'id')));
+      }
       const recommendationId = numberValue(result.lastInsertRowid);
       for (const citation of normalizedCitations.values()) {
         this.db.prepare(LIBRARY_SQL.insertOrUpdateCitation).run(
@@ -910,11 +930,18 @@ export class LibraryRepository {
     return mapRecommendation(row, citations);
   }
 
-  private insertIdentifiers(bookId: number, identifiers: readonly NormalizedIdentifier[]): void {
+  private insertIdentifiersAndFindOwners(bookId: number, identifiers: readonly NormalizedIdentifier[]): Map<number, Row> {
     const statement = this.db.prepare(LIBRARY_SQL.insertIdentifier);
+    const owners = new Map<number, Row>();
     for (const identifier of identifiers) {
       statement.run(bookId, identifier.scheme, identifier.value, identifier.source);
+      const owner = this.db.prepare(LIBRARY_SQL.selectBookByIdentifier).get(
+        identifier.scheme,
+        identifier.value,
+      ) as Row | undefined;
+      if (owner) owners.set(numberValue(rowValue(owner, 'id')), owner);
     }
+    return owners;
   }
 
   private fillMissingBookFields(bookId: number, current: Row, input: NormalizedCreateBook): void {

@@ -274,7 +274,7 @@ export const LIBRARY_SQL = {
     FROM recommendations
     WHERE id = ?`,
   insertRecommendation: `
-    INSERT INTO recommendations
+    INSERT OR IGNORE INTO recommendations
       (book_id, source_conversation_id, request_id, rationale, cautions)
     VALUES (?, ?, ?, ?, ?)`,
   countRecommendations: `

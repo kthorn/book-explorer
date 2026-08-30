@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { closeDatabase, openDatabase, type Database } from '../src/db.js';
+import { closeDatabase, LIBRARY_SQL, openDatabase, type Database } from '../src/db.js';
 import {
   AmbiguousBookError,
   LibraryRepository,
@@ -30,6 +30,66 @@ const citation: CitationInput = {
   provider: 'openai',
   retrievedAt: '2026-08-29T00:00:00.000Z',
 };
+
+function injectOnMissingLookup(db: Database, sql: string, inject: () => void): Database {
+  let injected = false;
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === 'exec' || property === 'close') {
+        return target[property].bind(target);
+      }
+      if (property !== 'prepare') return Reflect.get(target, property);
+      return (query: string) => {
+        const statement = target.prepare(query);
+        if (query !== sql) return statement;
+        return new Proxy(statement, {
+          get(statementTarget, statementProperty) {
+            if (statementProperty !== 'get') {
+              const value = Reflect.get(statementTarget, statementProperty);
+              return typeof value === 'function' ? value.bind(statementTarget) : value;
+            }
+            return (...parameters: any[]) => {
+              const result = statementTarget.get(...parameters);
+              if (!injected && result === undefined) {
+                injected = true;
+                inject();
+              }
+              return result;
+            };
+          },
+        });
+      };
+    },
+  }) as unknown as Database;
+}
+
+test('reselects an identifier owner when it appears between lookup and insertion', () => {
+  withDatabase((db) => {
+    let injectedBookId = 0;
+    const racingDatabase = injectOnMissingLookup(db, LIBRARY_SQL.selectBookByIdentifier, () => {
+      injectedBookId = Number(
+        db.prepare(
+          `INSERT INTO books (title, author, normalized_title, normalized_author)
+           VALUES (?, ?, ?, ?)`,
+        ).run('Injected', 'Other Author', 'injected', 'other author').lastInsertRowid,
+      );
+      db.prepare(
+        `INSERT INTO book_identifiers (book_id, scheme, value, source)
+         VALUES (?, ?, ?, ?)`,
+      ).run(injectedBookId, 'openlibrary_work', 'OL123W', 'race');
+    });
+    const library = new LibraryRepository(racingDatabase);
+    const result = library.createOrFindBook({
+      title: 'Requested',
+      author: 'Author',
+      identifiers: [{ scheme: 'openlibrary_work', value: 'OL123W', source: 'agent' }],
+    });
+
+    assert.equal(result.id, injectedBookId);
+    assert.equal(result.identifiers.some((identifier) => identifier.value === 'OL123W'), true);
+    assert.equal((db.prepare('SELECT COUNT(*) AS count FROM books').get() as { count: number }).count, 1);
+  });
+});
 
 test('reuses a book by exact identifier and fills only missing metadata', () => {
   withDatabase((_db, library) => {
@@ -166,6 +226,27 @@ test('notes can be edited and deleted only within their book', () => {
     assert.equal(library.deleteNote(second.id, note.id), false);
     assert.equal(library.deleteNote(first.id, note.id), true);
     assert.deepEqual(library.getBook(first.id)?.notes, []);
+  });
+});
+
+test('reselects an existing recommendation after an insert conflict', () => {
+  withDatabase((db, library) => {
+    const book = library.createOrFindBook({ title: 'Book', author: 'Author' });
+    let injectedRecommendationId = 0;
+    const racingDatabase = injectOnMissingLookup(db, LIBRARY_SQL.selectRecommendationByRequest, () => {
+      injectedRecommendationId = Number(
+        db.prepare(
+          `INSERT INTO recommendations
+           (book_id, source_conversation_id, request_id, rationale, cautions)
+           VALUES (?, ?, ?, ?, ?)`,
+        ).run(book.id, null, 'race-request', 'first', null).lastInsertRowid,
+      );
+    });
+    const racedLibrary = new LibraryRepository(racingDatabase);
+    const result = racedLibrary.recordRecommendation('race-request', book.id, 'second', null, []);
+
+    assert.equal(result.id, injectedRecommendationId);
+    assert.equal(result.rationale, 'first');
   });
 });
 
