@@ -69,6 +69,17 @@ function requiredPath(value: unknown, label: string, preserveTilde = false): str
   return preserveTilde ? value.trim() : resolve(value.trim());
 }
 
+function agentDerivedPath(values: readonly unknown[], derived: string, label: string): string {
+  for (const value of values) {
+    if (value === undefined) continue;
+    const provided = requiredPath(value, label);
+    if (provided !== derived) {
+      throw new ConfigurationError(`${label} must be derived from agentDir: ${derived}`);
+    }
+  }
+  return derived;
+}
+
 export function resolveApplicationPaths(input: ApplicationPaths | ApplicationPathsInput): ApplicationPaths {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new ConfigurationError("Application paths must be an object");
@@ -96,12 +107,14 @@ export function resolveApplicationPaths(input: ApplicationPaths | ApplicationPat
       value.modelsStorePath ?? value.modelsStoreFile ?? join(agentDir, "models-store.json"),
       "Application models store path",
     ),
-    webSearchConfigPath: requiredPath(
-      value.webSearchConfigPath ?? value.configPath ?? join(agentDir, "web-search.json"),
+    webSearchConfigPath: agentDerivedPath(
+      [value.webSearchConfigPath, value.configPath],
+      join(agentDir, "web-search.json"),
       "Web search config path",
     ),
-    webSearchCacheDir: requiredPath(
-      value.webSearchCacheDir ?? value.cacheDir ?? join(agentDir, "web-search-cache"),
+    webSearchCacheDir: agentDerivedPath(
+      [value.webSearchCacheDir, value.cacheDir],
+      join(agentDir, "web-search-cache"),
       "Web search cache directory",
     ),
   };

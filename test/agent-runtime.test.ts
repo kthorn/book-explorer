@@ -14,6 +14,7 @@ import test from "node:test";
 import {
   initializeAgentRuntime,
   createTurnLoader,
+  type AgentRuntimeState,
   type RuntimeDependencies,
 } from "../src/agent-runtime.js";
 import {
@@ -22,6 +23,7 @@ import {
 } from "../src/search-guard.js";
 import {
   PINNED_WEB_SEARCH_CONFIG,
+  resolveApplicationPaths,
   type ApplicationPaths,
 } from "../src/config.js";
 
@@ -246,12 +248,59 @@ test("config rejects openaiApiKey and scrubs credentials before extension loadin
     rmSync(fixture.paths.webSearchConfigPath, { force: true });
     const state = await initializeAgentRuntime(fixture.paths, dependencies) as unknown as ExpectedState;
     const capture: CitationCapture = new Map();
-    const loader = await createTurnLoader(state as never, [], capture);
+    const loader = await createTurnLoader(state as unknown as AgentRuntimeState, [], capture);
     assert.ok(loader);
     assert.equal(imported, true);
   } finally {
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previousKey;
+    cleanup(fixture);
+  }
+});
+
+test("web-search config and cache overrides must stay under the application agent directory", () => {
+  const fixture = pathsFixture();
+  try {
+    assert.throws(
+      () => resolveApplicationPaths({
+        ...fixture.paths,
+        webSearchConfigPath: join(fixture.directory, "outside", "web-search.json"),
+      }),
+      /agent directory|agentDir|web-search/i,
+    );
+    assert.throws(
+      () => resolveApplicationPaths({
+        ...fixture.paths,
+        webSearchCacheDir: join(fixture.directory, "outside", "web-search-cache"),
+      }),
+      /agent directory|agentDir|web-search/i,
+    );
+  } finally {
+    cleanup(fixture);
+  }
+});
+
+test("actual pi-web-access reads the application agent config after env isolation", async () => {
+  const fixture = pathsFixture();
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const decoyDir = join(fixture.directory, "decoy-agent");
+  try {
+    mkdirSync(decoyDir, { recursive: true });
+    writeFileSync(join(decoyDir, "web-search.json"), JSON.stringify({ tools: { webSearch: { enabled: false } } }));
+    process.env.PI_CODING_AGENT_DIR = decoyDir;
+    const { dependencies } = runtimeFixture();
+    const state = await initializeAgentRuntime(fixture.paths, dependencies) as unknown as AgentRuntimeState;
+    const loader = await createTurnLoader(state, [], new Map());
+    const result = loader.getExtensions();
+    const extension = result.extensions.find((entry) => entry.path.includes("pi-web-access"));
+    assert.ok(extension);
+    assert.equal(result.errors.length, 0);
+    assert.equal(extension.tools.has("web_search"), true);
+    assert.equal(state.paths.webSearchConfigPath, join(state.paths.agentDir, "web-search.json"));
+    assert.equal(state.paths.webSearchCacheDir, join(state.paths.agentDir, "web-search-cache"));
+  } finally {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     cleanup(fixture);
   }
 });
@@ -272,7 +321,7 @@ test("turn loader uses only the application directories and exact tool allowlist
         } as never;
       },
     };
-    const loader = await createTurnLoader(state as never, [], new Map());
+    const loader = await createTurnLoader(state as unknown as AgentRuntimeState, [], new Map());
     assert.ok(loader);
     const options = observed[0] as Record<string, unknown> & {
       appendSystemPromptOverride?: (base: string[]) => string[];

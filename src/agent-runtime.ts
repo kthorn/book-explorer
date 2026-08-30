@@ -201,15 +201,6 @@ function defaultExtensionPath(): string {
   }
 }
 
-function stateFrom(
-  value: AgentRuntimeState | AgentModelRuntime,
-): AgentRuntimeState {
-  if (value && typeof value === "object" && "runtime" in value && "paths" in value) {
-    return value as AgentRuntimeState;
-  }
-  throw new AgentRuntimeError("Turn creation requires the initialized AgentRuntimeState");
-}
-
 export async function initializeAgentRuntime(
   input: ApplicationPaths | ApplicationPathsInput,
   dependencies?: RuntimeDependencies,
@@ -265,11 +256,10 @@ export async function initializeAgentRuntime(
 }
 
 export async function createTurnLoader(
-  runtime: AgentRuntimeState | AgentModelRuntime,
+  state: AgentRuntimeState,
   customTools: readonly ToolDefinition[],
   citationCapture: CitationCapture,
 ): Promise<ResourceLoader> {
-  const state = stateFrom(runtime);
   if (!Array.isArray(customTools)) throw new TypeError("Custom tools must be an array");
   if (!state.model || state.libraryOnlyReason) {
     throw new AgentRuntimeError(state.libraryOnlyReason ?? "Model turns are unavailable in library-only mode");
