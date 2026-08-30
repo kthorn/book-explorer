@@ -874,6 +874,11 @@ function wire() {
     await loadLibrary();
   });
   messageForm?.addEventListener("submit", submitMessage);
+  messageInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey) return;
+    event.preventDefault();
+    messageForm?.requestSubmit();
+  });
   showView("chat");
   void loadConversations();
 }
