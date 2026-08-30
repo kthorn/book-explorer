@@ -149,18 +149,21 @@ function responseText(value: unknown, label: string): string {
   return value.trim();
 }
 
-function responseYear(value: unknown): number | null {
+function responseYear(value: unknown, dateString = false): number | null {
   if (value === null || value === undefined || value === "") return null;
+  if (dateString && typeof value !== "string") {
+    return malformed("Open Library response has an invalid publication date");
+  }
   if (typeof value === "number") {
-    return Number.isSafeInteger(value) && value >= 0 && value <= 9999
-      ? value
-      : null;
+    if (Number.isSafeInteger(value) && value >= 0 && value <= 9999)
+      return value;
+    return malformed("Open Library response has an invalid publication year");
   }
   if (typeof value === "string") {
     const match = /(?:^|[^\d])(\d{4})(?!\d)/u.exec(value);
     return match ? Number(match[1]) : null;
   }
-  return null;
+  return malformed("Open Library response has an invalid publication year");
 }
 
 function responseYearFrom(
@@ -168,7 +171,11 @@ function responseYearFrom(
   ...keys: string[]
 ): number | null {
   for (const key of keys) {
-    if (key in record) return responseYear(record[key]);
+    if (key in record)
+      return responseYear(
+        record[key],
+        key === "first_publish_date" || key === "publish_date",
+      );
   }
   return null;
 }
@@ -557,7 +564,7 @@ export class OpenLibraryClient {
           };
         throw error;
       }
-      this.writeCache(metadata);
+      this.replaceCache([metadata], []);
       return { metadata };
     }
 
@@ -579,7 +586,12 @@ export class OpenLibraryClient {
           };
         throw error;
       }
-      this.writeCache(metadata);
+      this.replaceCache(
+        [metadata],
+        this.findCachedByIsbn(normalized.isbn!).map(
+          (entry) => entry.metadata.workId,
+        ),
+      );
       return { metadata };
     }
 
@@ -609,7 +621,13 @@ export class OpenLibraryClient {
       }
       throw error;
     }
-    for (const candidate of candidates) this.writeCache(candidate);
+    this.replaceCache(
+      candidates,
+      this.findCachedByTitleAuthor(
+        normalized.title!,
+        normalized.author!,
+      ).map((entry) => entry.metadata.workId),
+    );
     return { candidates };
   }
 
@@ -867,17 +885,23 @@ export class OpenLibraryClient {
     return milliseconds;
   }
 
-  private writeCache(metadata: OpenLibraryMetadata): void {
+  private replaceCache(
+    metadata: OpenLibraryMetadata[],
+    supersededWorkIds: readonly string[],
+  ): void {
     const retrievedAt = new Date(this.nowMillis()).toISOString();
     transaction(this.db, () => {
-      this.db
-        .prepare(LIBRARY_SQL.upsertOpenLibraryCache)
-        .run(
-          metadata.workId,
+      const deleteCache = this.db.prepare(LIBRARY_SQL.deleteOpenLibraryCache);
+      for (const workId of supersededWorkIds) deleteCache.run(workId);
+      const upsertCache = this.db.prepare(LIBRARY_SQL.upsertOpenLibraryCache);
+      for (const entry of metadata) {
+        upsertCache.run(
+          entry.workId,
           CACHE_PAYLOAD_VERSION,
-          JSON.stringify(metadata),
+          JSON.stringify(entry),
           retrievedAt,
         );
+      }
     });
   }
 }

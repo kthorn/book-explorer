@@ -318,6 +318,9 @@ export const LIBRARY_SQL = {
     SELECT work_id, payload_version, payload, retrieved_at
     FROM open_library_cache
     ORDER BY work_id`,
+  deleteOpenLibraryCache: `
+    DELETE FROM open_library_cache
+    WHERE work_id = ?`,
   upsertOpenLibraryCache: `
     INSERT INTO open_library_cache (work_id, payload_version, payload, retrieved_at)
     VALUES (?, ?, ?, ?)

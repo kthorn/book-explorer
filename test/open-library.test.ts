@@ -167,6 +167,41 @@ test('Open Library treats unparseable optional publication dates as null', async
   }
 });
 
+test('Open Library rejects non-string publication dates and invalid year numbers', async () => {
+  const fixture = await serverFixture();
+  try {
+    const responses = new Map<string, Record<string, unknown>>([
+      ['OL125W', { first_publish_date: { year: 1988 } }],
+      ['OL126W', { first_publish_date: 1988 }],
+      ['OL127W', { first_publish_year: 10_000 }],
+    ]);
+    fixture.setHandler((request, response) => {
+      const path = new URL(request.url ?? '/', fixture.baseUrl).pathname;
+      const workId = path.match(/^\/works\/(OL\d+W)\.json$/i)?.[1]?.toUpperCase();
+      json(response, 200, {
+        title: 'Invalid date payload',
+        authors: [{ name: 'An Author' }],
+        isbn: ['9780306406157'],
+        ...(workId ? responses.get(workId) : {}),
+      });
+    });
+    await withDatabase(async (db) => {
+      const client = new OpenLibraryClient(db, { baseUrl: fixture.baseUrl });
+      for (const workId of responses.keys()) {
+        await assert.rejects(
+          () => client.lookup({ workId }),
+          (error: unknown) =>
+            error instanceof Error &&
+            'code' in error &&
+            (error as { code: string }).code === 'malformed_response',
+        );
+      }
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('Open Library caps parsed identifier aliases at the v1 limit', async () => {
   const fixture = await serverFixture();
   try {
@@ -300,6 +335,96 @@ test('Open Library serves fresh cache, misses old/schema-version rows, and repla
       };
       assert.equal(row.payload_version, 1);
       assert.equal((JSON.parse(row.payload) as OpenLibraryMetadata).title, 'Explicit refresh');
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Open Library removes superseded ISBN cache rows on a changed-work refresh', async () => {
+  const fixture = await serverFixture();
+  try {
+    let workId = 'OL200W';
+    let title = 'ISBN original';
+    fixture.setHandler((_request, response) =>
+      json(response, 200, {
+        title,
+        authors: [{ name: 'An Author' }],
+        works: [{ key: `/works/${workId}` }],
+        publish_date: 'October 1, 1988',
+        isbn_13: ['9780306406157'],
+      }),
+    );
+    await withDatabase(async (db) => {
+      const client = new OpenLibraryClient(db, { baseUrl: fixture.baseUrl });
+      const first = await client.lookup({ isbn: '9780306406157' });
+      assert.equal(first.metadata?.workId, 'OL200W');
+
+      workId = 'OL201W';
+      title = 'ISBN refreshed';
+      const refreshed = await client.lookup(
+        { isbn: '9780306406157' },
+        { refresh: true },
+      );
+      assert.equal(refreshed.metadata?.workId, 'OL201W');
+
+      const rows = db
+        .prepare('SELECT work_id FROM open_library_cache ORDER BY work_id')
+        .all() as Array<{ work_id: string }>;
+      assert.deepEqual(rows.map((row) => row.work_id), ['OL201W']);
+      const cached = await client.lookup({ isbn: '9780306406157' });
+      assert.equal(cached.metadata?.workId, 'OL201W');
+      assert.equal(fixture.requests.length, 2);
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Open Library removes superseded search cache rows on a changed-work refresh', async () => {
+  const fixture = await serverFixture();
+  try {
+    let workId = 'OL300W';
+    fixture.setHandler((_request, response) =>
+      json(response, 200, {
+        numFound: 1,
+        docs: [{
+          key: `/works/${workId}`,
+          title: 'Search cached',
+          author_name: ['An Author'],
+          first_publish_year: 1988,
+          isbn: ['9780306406157'],
+        }],
+      }),
+    );
+    await withDatabase(async (db) => {
+      const client = new OpenLibraryClient(db, { baseUrl: fixture.baseUrl });
+      const first = await client.lookup({
+        title: 'Search cached',
+        author: 'An Author',
+      });
+      assert.equal(first.candidates?.[0]?.workId, 'OL300W');
+
+      workId = 'OL301W';
+      const refreshed = await client.lookup(
+        { title: 'Search cached', author: 'An Author' },
+        { refresh: true },
+      );
+      assert.equal(refreshed.candidates?.[0]?.workId, 'OL301W');
+
+      const rows = db
+        .prepare('SELECT work_id FROM open_library_cache ORDER BY work_id')
+        .all() as Array<{ work_id: string }>;
+      assert.deepEqual(rows.map((row) => row.work_id), ['OL301W']);
+      const cached = await client.lookup({
+        title: 'Search cached',
+        author: 'An Author',
+      });
+      assert.deepEqual(
+        cached.candidates?.map((candidate) => candidate.workId),
+        ['OL301W'],
+      );
+      assert.equal(fixture.requests.length, 2);
     });
   } finally {
     await fixture.close();
