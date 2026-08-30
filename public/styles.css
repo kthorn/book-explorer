@@ -1,0 +1,477 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #f5f6f8;
+  color: #1c2430;
+  --panel: #fff;
+  --muted: #647184;
+  --line: #dbe1e8;
+  --accent: #315ce8;
+  --accent-soft: #edf1ff;
+  --danger: #b42318;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f5f6f8;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr) 330px;
+  min-height: 100vh;
+}
+
+.sidebar,
+.drawer,
+.main-panel {
+  min-width: 0;
+  background: var(--panel);
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  border-right: 1px solid var(--line);
+  padding: 1.25rem;
+}
+
+.sidebar-header,
+.main-header,
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sidebar h1,
+.main-header h2,
+.drawer-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.sidebar-header {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.conversation-list {
+  display: grid;
+  gap: 0.35rem;
+  overflow: auto;
+}
+
+.conversation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.conversation-row .button:first-child {
+  justify-content: flex-start;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-row.active .button:first-child {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.conversation-row > .button:not(:first-child) {
+  padding: 0.3rem;
+  font-size: 0.72rem;
+}
+
+.sidebar-link {
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--accent);
+  padding: 1rem 0 0;
+  text-align: left;
+}
+
+.main-panel {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  background: #f5f6f8;
+}
+
+.main-header {
+  min-height: 76px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  padding: 1rem 1.5rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chat-view,
+.library-view {
+  width: min(100%, 920px);
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.transcript {
+  display: grid;
+  gap: 1rem;
+}
+
+.message,
+.recommendation-card,
+.book-card,
+.proposal-card,
+.book-details,
+.filters {
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel);
+  padding: 1rem;
+}
+
+.message {
+  max-width: 82%;
+}
+
+.message-user {
+  justify-self: end;
+  background: var(--accent-soft);
+}
+
+.message-role {
+  margin-bottom: 0.45rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.message-text,
+.book-note,
+.recommendation-rationale dd,
+.recommendation-cautions dd,
+.citation-snippet {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.message-incomplete {
+  border-color: #e8a23a;
+}
+
+.message-state {
+  display: inline-block;
+  margin-top: 0.75rem;
+  color: #9a5d00;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.message-form {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  background: #f5f6f8;
+  padding-top: 1rem;
+}
+
+textarea,
+input,
+select {
+  width: 100%;
+  border: 1px solid #b8c2cf;
+  border-radius: 0.45rem;
+  background: var(--panel);
+  color: inherit;
+  padding: 0.55rem 0.65rem;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.button-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.button-secondary {
+  border-color: var(--line);
+  background: transparent;
+  color: inherit;
+}
+
+.button-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.library-view[hidden],
+.chat-view[hidden],
+#cancel-turn[hidden],
+#toast[hidden] {
+  display: none;
+}
+
+.filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px 120px 160px auto;
+  gap: 0.65rem;
+  align-items: end;
+  margin-bottom: 1rem;
+}
+
+.filters label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.library-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.book-card,
+.recommendation-card {
+  display: flex;
+  gap: 1rem;
+}
+
+.book-cover {
+  width: 72px;
+  height: 108px;
+  flex: 0 0 auto;
+  border-radius: 0.3rem;
+  object-fit: cover;
+  background: #e8ebf0;
+}
+
+.book-card-content,
+.recommendation-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.book-card h3,
+.recommendation-card h3,
+.book-details h2,
+.proposal-card h3 {
+  margin: 0 0 0.35rem;
+}
+
+.book-author {
+  margin: 0 0 0.7rem;
+  color: var(--muted);
+}
+
+.book-field,
+.recommendation-series,
+.recommendation-rationale,
+.recommendation-cautions,
+.recommendation-status {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+}
+
+.book-field dt,
+.book-field dd,
+.recommendation-series dt,
+.recommendation-series dd,
+.recommendation-rationale dt,
+.recommendation-rationale dd,
+.recommendation-cautions dt,
+.recommendation-cautions dd,
+.recommendation-status dt,
+.recommendation-status dd {
+  margin: 0;
+}
+
+.book-field dt,
+.recommendation-series dt,
+.recommendation-rationale dt,
+.recommendation-cautions dt,
+.recommendation-status dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.recommendation-actions,
+.proposal-actions,
+.note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.8rem;
+}
+
+.citations {
+  margin-top: 0.8rem;
+  font-size: 0.84rem;
+}
+
+.citation-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.citation-link {
+  color: var(--accent);
+}
+
+.citation-snippet {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.drawer {
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  padding: 1.25rem;
+}
+
+.drawer-content {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.book-details > .book-cover {
+  width: 110px;
+  height: 165px;
+}
+
+.book-notes {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.book-notes h3 {
+  margin-top: 0;
+}
+
+.book-note {
+  border-bottom: 1px solid var(--line);
+  padding: 0.75rem 0;
+}
+
+.empty-state {
+  color: var(--muted);
+  text-align: center;
+}
+
+.toast {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  max-width: min(360px, calc(100vw - 2rem));
+  border-radius: 0.45rem;
+  background: #17202b;
+  color: #fff;
+  padding: 0.75rem 1rem;
+  box-shadow: 0 0.4rem 1.5rem rgb(0 0 0 / 20%);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 1050px) {
+  .app-shell {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .drawer {
+    position: fixed;
+    z-index: 2;
+    top: 0;
+    right: 0;
+    width: min(360px, 92vw);
+    height: 100vh;
+    box-shadow: -0.5rem 0 2rem rgb(0 0 0 / 16%);
+  }
+}
+
+@media (max-width: 700px) {
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .conversation-list {
+    max-height: 10rem;
+  }
+
+  .chat-view,
+  .library-view {
+    padding: 1rem;
+  }
+
+  .filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .message {
+    max-width: 100%;
+  }
+}

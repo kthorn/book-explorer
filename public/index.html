@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Book Explorer</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script id="csrf-token" type="application/json">__BOOK_EXPLORER_CSRF_TOKEN__</script>
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <aside class="sidebar" aria-label="Conversations">
+        <header class="sidebar-header">
+          <h1>Book Explorer</h1>
+          <button id="new-conversation" class="button button-primary" type="button">New conversation</button>
+        </header>
+        <div id="conversation-list" class="conversation-list" aria-live="polite"></div>
+        <button id="library-link" class="sidebar-link" type="button">Library</button>
+      </aside>
+
+      <main class="main-panel">
+        <header class="main-header">
+          <div>
+            <p class="eyebrow">Recommendation workspace</p>
+            <h2 id="view-title">Conversation</h2>
+          </div>
+          <button id="cancel-turn" class="button button-danger" type="button" hidden>Stop</button>
+        </header>
+        <section id="chat-view" class="chat-view" aria-live="polite">
+          <div id="transcript" class="transcript"></div>
+          <p id="chat-empty" class="empty-state">Choose a conversation to start exploring books.</p>
+          <form id="message-form" class="message-form">
+            <label class="sr-only" for="message-input">Message</label>
+            <textarea id="message-input" rows="3" maxlength="100000" placeholder="Ask for a recommendation or talk about a book" required></textarea>
+            <button class="button button-primary" type="submit">Send</button>
+          </form>
+        </section>
+        <section id="library-view" class="library-view" hidden>
+          <form id="library-filters" class="filters">
+            <label>Search <input id="library-query" name="query" type="search"></label>
+            <label>Status
+              <select id="library-status" name="status">
+                <option value="">Any</option>
+                <option value="recommended">Recommended</option>
+                <option value="interested">Interested</option>
+                <option value="reading">Reading</option>
+                <option value="read">Read</option>
+                <option value="abandoned">Abandoned</option>
+                <option value="not_interested">Not interested</option>
+              </select>
+            </label>
+            <label>Rating
+              <select id="library-rating" name="rating">
+                <option value="">Any</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+              </select>
+            </label>
+            <label>Series
+              <select id="library-series" name="seriesId">
+                <option value="">Any</option>
+              </select>
+            </label>
+            <button class="button button-secondary" type="submit">Filter</button>
+          </form>
+          <div id="library-list" class="library-list"></div>
+        </section>
+      </main>
+
+      <aside id="drawer" class="drawer" aria-label="Book details and approvals">
+        <div class="drawer-header">
+          <h2>Details</h2>
+          <button id="close-drawer" class="button button-secondary" type="button">Close</button>
+        </div>
+        <div id="drawer-content" class="drawer-content">
+          <p class="empty-state">Select a book or pending change.</p>
+        </div>
+      </aside>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

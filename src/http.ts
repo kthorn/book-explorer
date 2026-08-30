@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   createServer,
   type IncomingMessage,
@@ -55,6 +57,15 @@ const MAX_PAGE_LIMIT = 100;
 const MAX_MESSAGE_LENGTH = 100_000;
 const MAX_REQUEST_ID_LENGTH = 200;
 const CSRF_HEADER = "x-csrf-token";
+const CSRF_MARKER = "__BOOK_EXPLORER_CSRF_TOKEN__";
+const PUBLIC_DIRECTORY = join(process.cwd(), "public");
+const STATIC_FILES: Readonly<Record<string, { file: string; type: string }>> = {
+  "/": { file: "index.html", type: "text/html; charset=utf-8" },
+  "/index.html": { file: "index.html", type: "text/html; charset=utf-8" },
+  "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
+  "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+  "/render.js": { file: "render.js", type: "text/javascript; charset=utf-8" },
+};
 
 export const MAX_JSON_BODY_BYTES = DEFAULT_MAX_JSON_BODY_BYTES;
 
@@ -616,6 +627,34 @@ function errorShape(error: unknown): {
   };
 }
 
+function serveStatic(
+  path: string,
+  response: ServerResponse,
+  csrfToken: string,
+): boolean {
+  const file = STATIC_FILES[path];
+  if (!file) return false;
+  let payload = readFileSync(join(PUBLIC_DIRECTORY, file.file));
+  if (file.file === "index.html") {
+    const shell = payload.toString("utf8");
+    if (!shell.includes(CSRF_MARKER)) {
+      throw new Error("Static shell is missing its CSRF marker");
+    }
+    payload = Buffer.from(
+      shell.replace(CSRF_MARKER, JSON.stringify(csrfToken)),
+      "utf8",
+    );
+  }
+  response.writeHead(200, {
+    "content-type": file.type,
+    "content-length": payload.byteLength,
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  });
+  response.end(payload);
+  return true;
+}
+
 function jsonResponse(
   response: ServerResponse,
   status: number,
@@ -1011,11 +1050,12 @@ async function route(
     throw new ValidationError("Invalid request URL");
   }
 
+  const path = url.pathname;
+  if (method === "GET" && serveStatic(path, response, csrfToken)) return;
   const body =
     method === "GET" || method === "DELETE"
       ? undefined
       : await readJson(request, deps.maxJsonBodyBytes);
-  const path = url.pathname;
 
   if (path === "/api/conversations") {
     if (method === "GET") {
