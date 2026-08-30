@@ -1,7 +1,7 @@
-import { closeSync, openSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import { closeSync, openSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 
-import { READING_STATUSES, type ReadingStatus } from './normalize.js';
+import { READING_STATUSES, type ReadingStatus } from "./normalize.js";
 
 export type Database = DatabaseSync;
 export { READING_STATUSES };
@@ -98,7 +98,9 @@ CREATE INDEX idx_books_normalized_title_author
   ON books (normalized_title, normalized_author);
 `;
 
-const migrations = [{ sql: MIGRATION_1, version: 'PRAGMA user_version = 1' }] as const;
+const migrations = [
+  { sql: MIGRATION_1, version: "PRAGMA user_version = 1" },
+] as const;
 
 export const LIBRARY_SQL = {
   selectBook: `
@@ -192,7 +194,7 @@ export const LIBRARY_SQL = {
     UPDATE books
     SET series_position = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ? AND series_position IS NULL`,
-  deleteBook: 'DELETE FROM books WHERE id = ?',
+  deleteBook: "DELETE FROM books WHERE id = ?",
   searchBooks: `
     SELECT b.id, b.title, b.author, b.publication_year, b.cover_url,
            b.series_id, b.series_position, b.status, b.rating,
@@ -231,7 +233,7 @@ export const LIBRARY_SQL = {
     UPDATE series
     SET note = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?`,
-  deleteSeries: 'DELETE FROM series WHERE id = ?',
+  deleteSeries: "DELETE FROM series WHERE id = ?",
   searchSeries: `
     SELECT id, name, normalized_name, note, created_at, updated_at
     FROM series
@@ -263,8 +265,8 @@ export const LIBRARY_SQL = {
     UPDATE book_notes
     SET note = ?
     WHERE id = ?`,
-  deleteNote: 'DELETE FROM book_notes WHERE id = ? AND book_id = ?',
-  deleteNoteById: 'DELETE FROM book_notes WHERE id = ?',
+  deleteNote: "DELETE FROM book_notes WHERE id = ? AND book_id = ?",
+  deleteNoteById: "DELETE FROM book_notes WHERE id = ?",
   selectRecommendationByRequest: `
     SELECT id, book_id, source_conversation_id, request_id, rationale, cautions, created_at
     FROM recommendations
@@ -326,20 +328,26 @@ export const LIBRARY_SQL = {
 } as const;
 
 function precreateDatabaseFile(path: string): void {
-  if (path === ':memory:') return;
+  if (path === ":memory:") return;
 
   try {
-    const descriptor = openSync(path, 'wx', 0o600);
+    const descriptor = openSync(path, "wx", 0o600);
     closeSync(descriptor);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
 }
 
 function migrate(db: Database): void {
-  const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
+  const row = db.prepare("PRAGMA user_version").get() as {
+    user_version: number;
+  };
   const currentVersion = Number(row.user_version);
-  if (!Number.isInteger(currentVersion) || currentVersion < 0 || currentVersion > migrations.length) {
+  if (
+    !Number.isInteger(currentVersion) ||
+    currentVersion < 0 ||
+    currentVersion > migrations.length
+  ) {
     throw new Error(`Unsupported database schema version: ${currentVersion}`);
   }
 
@@ -355,8 +363,8 @@ export function openDatabase(path: string): Database {
   precreateDatabaseFile(path);
   const db = new DatabaseSync(path);
   try {
-    db.exec('PRAGMA foreign_keys = ON;');
-    db.exec('PRAGMA journal_mode = WAL;');
+    db.exec("PRAGMA foreign_keys = ON;");
+    db.exec("PRAGMA journal_mode = WAL;");
     migrate(db);
     return db;
   } catch (error) {
@@ -370,14 +378,14 @@ export function closeDatabase(db: Database): void {
 }
 
 export function transaction<T>(db: Database, fn: () => T): T {
-  db.exec('BEGIN');
+  db.exec("BEGIN");
   try {
     const result = fn();
-    db.exec('COMMIT');
+    db.exec("COMMIT");
     return result;
   } catch (error) {
     try {
-      db.exec('ROLLBACK');
+      db.exec("ROLLBACK");
     } catch {
       // Preserve the operation's original error.
     }
