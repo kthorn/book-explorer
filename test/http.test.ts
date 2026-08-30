@@ -42,6 +42,7 @@ class FakeTurns {
     signal?: AbortSignal;
   }> = [];
   cancelled: string[] = [];
+  steered: Array<{ conversationId: number; text: string }> = [];
   signals: AbortSignal[] = [];
   emit: ((event: BrowserStreamEvent) => Promise<void>) | undefined;
   nextRequestId = "request-http";
@@ -102,6 +103,12 @@ class FakeTurns {
     if (this.activeRequestId !== requestId) return false;
     this.cancelled.push(requestId);
     this.activeRequestId = undefined;
+    return true;
+  }
+
+  async steer(conversationId: number, text: string): Promise<boolean> {
+    if (!this.activeRequestId) return false;
+    this.steered.push({ conversationId, text });
     return true;
   }
 }
@@ -639,6 +646,45 @@ test("HTTP proposal, Open Library, and message routes use service APIs", async (
       kind: "rating",
     });
     assertNoCors(rejected.headers);
+  } finally {
+    await stop(item);
+  }
+});
+
+test("HTTP accepts steering only while a turn is active", async () => {
+  const item = fixture();
+  await start(item);
+  try {
+    const inactive = await call(
+      item,
+      "POST",
+      `/api/conversations/${item.conversationId}/steer`,
+      { text: "too soon" },
+    );
+    assert.equal(inactive.status, 409);
+    assert.deepEqual(inactive.body, {
+      error: {
+        code: "turn_not_active",
+        message: "This conversation has no active model turn",
+        retryable: true,
+      },
+    });
+
+    item.turns.activeRequestId = "request-steer";
+    const accepted = await call(
+      item,
+      "POST",
+      `/api/conversations/${item.conversationId}/steer`,
+      { text: "focus on the sequel" },
+    );
+    assert.equal(accepted.status, 202);
+    assert.deepEqual(accepted.body, { steered: true });
+    assert.deepEqual(item.turns.steered, [
+      {
+        conversationId: item.conversationId,
+        text: "focus on the sequel",
+      },
+    ]);
   } finally {
     await stop(item);
   }

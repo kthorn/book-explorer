@@ -77,6 +77,7 @@ export interface HttpTurnCoordinator {
     input: TurnSubmitInput,
     emit: BrowserStreamEmitter,
   ): Promise<void> | void;
+  steer(conversationId: number, text: string): Promise<boolean> | boolean;
   cancel(requestId: string): Promise<boolean> | boolean;
   readonly activeRequestId?: string;
 }
@@ -176,6 +177,7 @@ function resolveDependencies(deps: HttpDependencies): ResolvedDependencies {
   }
   if (
     typeof (turns as { submit?: unknown }).submit !== "function" ||
+    typeof (turns as { steer?: unknown }).steer !== "function" ||
     typeof (turns as { cancel?: unknown }).cancel !== "function"
   ) {
     throw new TypeError("HTTP turn coordinator dependency is invalid");
@@ -753,11 +755,19 @@ function expectedHost(server: Server, configured?: string): string {
       : socketHost && configured === "127.0.0.1"
         ? socketHost
         : configured;
-  return new URL(`http://${host}`).host;
+  try {
+    return new URL(`http://${host}`).host;
+  } catch (cause) {
+    throw new TypeError("Configured HTTP host is invalid", { cause });
+  }
 }
 
 function expectedOrigin(deps: ResolvedDependencies, host: string): string {
-  return new URL(deps.origin ?? `http://${host}`).origin;
+  try {
+    return new URL(deps.origin ?? `http://${host}`).origin;
+  } catch (cause) {
+    throw new TypeError("Configured HTTP origin is invalid", { cause });
+  }
 }
 
 function isStateChangingMethod(method: string): boolean {
@@ -1100,7 +1110,33 @@ async function route(
     }
   }
 
-  let match = /^\/api\/conversations\/([^/]+)\/messages$/u.exec(path);
+  let match = /^\/api\/conversations\/([^/]+)\/steer$/u.exec(path);
+  if (match) {
+    if (method !== "POST")
+      throw new HttpError(404, "not_found", "Route not found", false);
+    const value = objectBody(body);
+    allowedKeys(value, ["text"]);
+    const conversationId = positiveId(
+      decodeSegment(match[1]!, "conversation ID"),
+      "Conversation ID",
+    );
+    const text = requiredText(
+      requiredBodyValue(value, "text"),
+      "Text",
+      MAX_MESSAGE_LENGTH,
+    );
+    if (!(await deps.turns.steer(conversationId, text))) {
+      throw new HttpError(
+        409,
+        "turn_not_active",
+        "This conversation has no active model turn",
+        true,
+      );
+    }
+    return jsonResponse(response, 202, { steered: true });
+  }
+
+  match = /^\/api\/conversations\/([^/]+)\/messages$/u.exec(path);
   if (match) {
     if (method !== "POST")
       throw new HttpError(404, "not_found", "Route not found", false);

@@ -6,73 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createHttpServer } from "../src/http.js";
-
-interface FakeNodeLike {
-  nodeType: "element" | "text";
-  tagName?: string;
-  textContent: string;
-  children: FakeNodeLike[];
-  attributes: Record<string, string>;
-  className?: string;
-  rel?: string;
-  href?: string;
-  src?: string;
-  referrerPolicy?: string;
-  appendChild(child: FakeNodeLike): FakeNodeLike;
-  append(...children: FakeNodeLike[]): void;
-  setAttribute(name: string, value: string): void;
-}
-
-class FakeNode implements FakeNodeLike {
-  readonly children: FakeNodeLike[] = [];
-  readonly attributes: Record<string, string> = {};
-  className = "";
-  rel = "";
-  href = "";
-  src = "";
-  referrerPolicy = "";
-  private text = "";
-
-  constructor(
-    readonly nodeType: "element" | "text",
-    readonly tagName?: string,
-  ) {}
-
-  get textContent(): string {
-    if (this.nodeType === "text") return this.text;
-    return this.text + this.children.map((child) => child.textContent).join("");
-  }
-
-  set textContent(value: string) {
-    this.text = String(value);
-    this.children.length = 0;
-  }
-
-  appendChild(child: FakeNodeLike): FakeNodeLike {
-    this.children.push(child);
-    return child;
-  }
-
-  append(...children: FakeNodeLike[]): void {
-    for (const child of children) this.appendChild(child);
-  }
-
-  setAttribute(name: string, value: string): void {
-    this.attributes[name] = value;
-  }
-}
-
-class FakeDocument {
-  createElement(tagName: string): FakeNode {
-    return new FakeNode("element", tagName.toUpperCase());
-  }
-
-  createTextNode(value: string): FakeNode {
-    const node = new FakeNode("text");
-    node.textContent = value;
-    return node;
-  }
-}
+import { FakeDocument, type FakeNodeLike } from "./fake-dom.js";
 
 interface Renderers {
   renderMessage(

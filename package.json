@@ -8,6 +8,7 @@
     "pi-web-access": "0.24.2"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.84.4",
     "@tailwindcss/cli": "^4.3.3",
     "daisyui": "^5.7.22",
     "tailwindcss": "^4.3.3",

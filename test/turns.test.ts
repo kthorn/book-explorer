@@ -40,6 +40,7 @@ interface Driver {
   prompt: (session: FakeSession, text: string) => Promise<void>;
   events: AgentSessionEvent[];
   promptTexts: string[];
+  steerTexts: string[];
   abortCount: number;
   disposeCount: number;
   lifecycle: string[];
@@ -73,6 +74,10 @@ class FakeSession implements AgentSessionLike {
   async prompt(text: string): Promise<void> {
     this.driver.promptTexts.push(text);
     await this.driver.prompt(this, text);
+  }
+
+  async steer(text: string): Promise<void> {
+    this.driver.steerTexts.push(text);
   }
 
   emit(event: AgentSessionEvent): void {
@@ -120,6 +125,7 @@ function driverFixture(
     prompt,
     events: [],
     promptTexts: [],
+    steerTexts: [],
     abortCount: 0,
     disposeCount: 0,
     lifecycle: [],
@@ -232,6 +238,10 @@ class PiCompactionSession implements AgentSessionLike {
       await this.session.sendUserMessage("additional context");
       await this.session.compact();
     }
+  }
+
+  async steer(text: string): Promise<void> {
+    await this.session.steer(text);
   }
 
   async abort(): Promise<void> {
@@ -365,6 +375,7 @@ test("turn retry reuses the request UUID and committed recommendation survives m
       .data;
     await tools
       .find((tool) => tool.name === "record_recommendation")!
+      // pi-lens-ignore: sql-injection
       .execute(
         `recommendation-${attempt}`,
         { bookId: book.id, rationale: `Recommendation ${attempt}` } as never,
@@ -793,6 +804,95 @@ test("global gate makes a second conversation visibly busy and releases only aft
     const third = await collectSubmit(service, item.conversations[1]);
     assert.deepEqual(third, [{ type: "complete", incomplete: false }]);
   } finally {
+    dispose(item);
+  }
+});
+
+test("steering targets only the active conversation", async () => {
+  const item = fixture();
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const driver = driverFixture(async (session) => {
+    await wait;
+    session.emit({ type: "agent_end", messages: [], willRetry: false });
+  });
+  try {
+    const service = coordinator(item, driver, ["request-steer"]);
+    const events: BrowserStreamEvent[] = [];
+    const first = service.submit(
+      { conversationId: item.conversations[0], text: "start" },
+      async (event) => {
+        events.push(event);
+      },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(
+      await service.steer(item.conversations[0], "focus on the sequel"),
+      true,
+    );
+    assert.equal(
+      await service.steer(item.conversations[0], "compare the adaptations"),
+      true,
+    );
+    assert.equal(
+      await service.steer(item.conversations[1], "wrong conversation"),
+      false,
+    );
+    assert.deepEqual(driver.steerTexts, [
+      "focus on the sequel",
+      "compare the adaptations",
+    ]);
+    const session = driver.lastSession;
+    assert.ok(session);
+    session.emit({
+      type: "queue_update",
+      steering: ["focus on the sequel", "compare the adaptations"],
+      followUp: [],
+    });
+    session.emit({ type: "turn_start" });
+    session.emit({
+      type: "queue_update",
+      steering: ["compare the adaptations"],
+      followUp: [],
+    });
+    session.emit({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "focus on the sequel" }],
+        timestamp: Date.now(),
+      },
+    });
+    session.emit({ type: "queue_update", steering: [], followUp: [] });
+    session.emit({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "compare the adaptations" }],
+        timestamp: Date.now(),
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(events, []);
+    session.emit({
+      type: "message_start",
+      message: { role: "assistant" } as never,
+    });
+
+    release();
+    await first;
+    assert.deepEqual(events, [
+      {
+        type: "assistant_start",
+        steering: ["focus on the sequel", "compare the adaptations"],
+      },
+      { type: "complete", incomplete: false },
+    ]);
+  } finally {
+    release();
     dispose(item);
   }
 });

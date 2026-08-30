@@ -419,7 +419,22 @@ function handleStreamEvent(event, context) {
     context.terminal
   )
     return;
-  if (event.type === "text_delta" && typeof event.delta === "string") {
+  if (event.type === "assistant_start" && Array.isArray(event.steering)) {
+    const steering = event.steering.filter(
+      (message) => typeof message === "string" && message.trim(),
+    );
+    if (!steering.length) return;
+    finishToolActivity(context);
+    for (const text of steering) {
+      append(
+        transcript,
+        renderMessage(document, { role: "user", content: text }),
+      );
+    }
+    context.assistantText = "";
+    context.toolCalls.clear();
+    createAssistantOutput(context);
+  } else if (event.type === "text_delta" && typeof event.delta === "string") {
     context.assistantText += event.delta;
     updateAssistant(context, false);
   } else if (event.type === "tool_status") {
@@ -491,6 +506,18 @@ async function submitMessage(event) {
   if (!text) return;
   if (!state.conversation) {
     toast("Create or choose a conversation first.");
+    return;
+  }
+  if (state.streaming) {
+    try {
+      await jsonRequest(`/api/conversations/${state.conversation.id}/steer`, {
+        method: "POST",
+        body: { text },
+      });
+      if (messageInput.value.trim() === text) messageInput.value = "";
+    } catch (error) {
+      toast(errorMessage(error));
+    }
     return;
   }
   messageInput.value = "";

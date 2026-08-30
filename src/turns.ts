@@ -37,6 +37,11 @@ export interface BrowserTextDeltaEvent {
   delta: string;
 }
 
+export interface BrowserAssistantStartEvent {
+  type: "assistant_start";
+  steering: string[];
+}
+
 export interface BrowserToolStatusEvent {
   type: "tool_status";
   toolCallId: string;
@@ -82,6 +87,7 @@ export type BrowserErrorCode =
 
 export type BrowserStreamEvent =
   | BrowserTextDeltaEvent
+  | BrowserAssistantStartEvent
   | BrowserToolStatusEvent
   | BrowserCitationEvent
   | BrowserCompleteEvent
@@ -90,6 +96,7 @@ export type BrowserStreamEvent =
 export interface AgentSessionLike {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string): Promise<void>;
+  steer(text: string): Promise<void>;
   abort(): Promise<void>;
   dispose(): void | PromiseLike<void>;
 }
@@ -167,6 +174,8 @@ interface ActiveRequest {
   pendingFailure?: unknown;
   agentEndSeen: boolean;
   modelCompleted: boolean;
+  steeringQueue: string[];
+  pendingSteering: string[];
   toolFailure?: unknown;
   citationTokens?: Set<string>;
   recommendations?: BrowserRecommendation[];
@@ -394,6 +403,18 @@ export class TurnCoordinator {
     return true;
   }
 
+  async steer(conversationId: number, text: string): Promise<boolean> {
+    const active = this.active;
+    if (
+      !active?.session ||
+      active.conversationId !== conversationId ||
+      active.phase !== "running"
+    )
+      return false;
+    await active.session.steer(text);
+    return true;
+  }
+
   submit(input: TurnSubmitInput, emit: BrowserStreamEmitter): Promise<void> {
     if (!input || typeof input !== "object") {
       return emit({
@@ -445,6 +466,8 @@ export class TurnCoordinator {
       incomplete: false,
       agentEndSeen: false,
       modelCompleted: false,
+      steeringQueue: [],
+      pendingSteering: [],
     };
     this.active = active;
     const abortListener = () => {
@@ -631,7 +654,28 @@ export class TurnCoordinator {
   ): Promise<void> {
     const event = record(rawEvent);
     if (!event) return;
-    if (event.type === "message_update") {
+    if (event.type === "queue_update") {
+      const steeringQueue = Array.isArray(event.steering)
+        ? event.steering.filter(
+            (message): message is string => typeof message === "string",
+          )
+        : active.steeringQueue;
+      const deliveredCount = active.steeringQueue.length - steeringQueue.length;
+      if (deliveredCount > 0) {
+        active.pendingSteering.push(
+          ...active.steeringQueue.slice(0, deliveredCount),
+        );
+      }
+      active.steeringQueue = steeringQueue;
+    } else if (
+      event.type === "message_start" &&
+      record(event.message)?.role === "assistant" &&
+      active.pendingSteering.length > 0
+    ) {
+      const steering = active.pendingSteering;
+      active.pendingSteering = [];
+      await this.deliver(active, { type: "assistant_start", steering }, emit);
+    } else if (event.type === "message_update") {
       const assistantEvent = event.assistantMessageEvent;
       if (isTextDeltaEvent(assistantEvent)) {
         active.sawText = true;
@@ -691,10 +735,10 @@ export class TurnCoordinator {
         active.failure = assistantFailure(message);
       } else if (reason === "aborted") {
         active.failure = new TurnCancelledError();
-      } else if (active.pendingFailure !== undefined) {
-        active.failure = active.pendingFailure;
-      } else {
+      } else if (active.pendingFailure === undefined) {
         active.modelCompleted = true;
+      } else {
+        active.failure = active.pendingFailure;
       }
     }
 
