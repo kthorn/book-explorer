@@ -84,6 +84,15 @@ const renderer = (async (): Promise<Renderers> => {
   return module;
 })();
 
+function findTag(node: FakeNodeLike, tagName: string): FakeNodeLike | undefined {
+  if (node.tagName === tagName) return node;
+  for (const child of node.children) {
+    const match = findTag(child, tagName);
+    if (match) return match;
+  }
+  return undefined;
+}
+
 test("static shell serves fixed assets with JSON CSRF data", async () => {
   const server = createHttpServer({
     library: { searchBooks: () => ({}) },
@@ -116,13 +125,22 @@ test("static shell serves fixed assets with JSON CSRF data", async () => {
     assert.match(shell.body, /class="[^"]*btn btn-primary/);
     assert.match(shell.body, /<dialog\s+id="drawer"/);
     assert.match(shell.body, /id="open-drawer"/);
+    assert.match(shell.body, /Source_Sans_3_Variable/);
+    assert.match(shell.body, /text-\[15px\]/);
     assert.match(css.body, /\.btn\{/);
-    const script = await get(address.port, "/app.js");
+    assert.match(css.body, /Inter Variable/);
+    assert.match(css.body, /Source Sans 3 Variable/);
+    assert.match(css.body, /Literata Variable/);
+    assert.match(shell.body, /src="\/app\.bundle\.js"/);
+    const script = await get(address.port, "/app.bundle.js");
     assert.equal(script.status, 200);
     assert.equal(script.contentType, "text/javascript; charset=utf-8");
-    const rendererScript = await get(address.port, "/render.js");
-    assert.equal(rendererScript.status, 200);
-    assert.equal(rendererScript.contentType, "text/javascript; charset=utf-8");
+    for (const font of ["inter", "source-sans-3", "literata"]) {
+      const response = await get(address.port, `/fonts/${font}.woff2`);
+      assert.equal(response.status, 200);
+      assert.equal(response.contentType, "font/woff2");
+      assert.ok(response.body.length > 0);
+    }
     const missing = await get(address.port, "/package.json");
     assert.equal(missing.status, 404);
   } finally {
@@ -167,14 +185,82 @@ test("static assets resolve relative to the module instead of the working direct
   }
 });
 
-test("renderMessage keeps malicious HTML as text", async () => {
+test("assistant Markdown renders formatting while keeping raw HTML inert", async () => {
+  const { renderMessage } = await renderer;
+  const document = new FakeDocument();
+  const formatted = renderMessage(document, {
+    role: "assistant",
+    content: "Use **bold** and *italics*.",
+  });
+  const body = formatted.children[1];
+  const paragraph = body.children[0];
+
+  assert.equal(paragraph.tagName, "P");
+  assert.deepEqual(
+    paragraph.children.map((child) => child.tagName ?? "TEXT"),
+    ["TEXT", "STRONG", "TEXT", "EM", "TEXT"],
+  );
+  assert.match(body.className ?? "", /Literata/);
+
+  const unsafe = renderMessage(document, {
+    role: "assistant",
+    content:
+      '<img src=x onerror="alert(1)"> **safe** [bad](javascript:alert(1))',
+  });
+  const unsafeParagraph = unsafe.children[1].children[0];
+  assert.match(unsafe.textContent, /<img src=x onerror=/);
+  assert.equal(unsafeParagraph.children[0].tagName, undefined);
+  assert.equal(
+    unsafeParagraph.children.some((child) => child.tagName === "A"),
+    false,
+  );
+});
+
+test("assistant Markdown safely renders partial tables, images, and headings", async () => {
+  const { renderMessage } = await renderer;
+  const document = new FakeDocument();
+  const table = "| Title | Author |\n| --- | --- |\n| Dune | Frank Herbert |";
+
+  for (let index = 1; index <= table.length; index += 1) {
+    assert.doesNotThrow(() =>
+      renderMessage(document, {
+        role: "assistant",
+        content: table.slice(0, index),
+      }),
+    );
+  }
+  const renderedTable = renderMessage(document, {
+    role: "assistant",
+    content: table,
+  });
+  assert.ok(findTag(renderedTable, "TABLE"));
+  assert.match(renderedTable.textContent, /Frank Herbert/);
+
+  const renderedImage = renderMessage(document, {
+    role: "assistant",
+    content: "![Cover](https://example.test/cover.jpg)",
+  });
+  const image = findTag(renderedImage, "IMG");
+  assert.ok(image);
+  assert.equal(image.attributes.src, "https://example.test/cover.jpg");
+  assert.equal(image.attributes.referrerpolicy, "no-referrer");
+
+  const renderedHeading = renderMessage(document, {
+    role: "assistant",
+    content: "## Recommendations",
+  });
+  assert.match(findTag(renderedHeading, "H2")?.className ?? "", /Inter/);
+});
+
+test("renderMessage keeps user Markdown and HTML as text", async () => {
   const { renderMessage } = await renderer;
   const node = renderMessage(new FakeDocument(), {
-    role: "assistant",
-    content: '<img src=x onerror="alert(1)">',
+    role: "user",
+    content: '<img src=x onerror="alert(1)"> **literal**',
   });
 
   assert.match(node.textContent, /<img src=x/);
+  assert.match(node.textContent, /\*\*literal\*\*/);
   assert.equal(
     node.children.some((child) => child.tagName === "IMG"),
     false,

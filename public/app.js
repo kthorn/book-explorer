@@ -784,7 +784,14 @@ async function showBook(bookOrId) {
     if (Array.isArray(book.identifiers) && book.identifiers.length) {
       const identifiers = document.createElement("section");
       identifiers.className = "card bg-base-200 p-4";
-      append(identifiers, nodeWithText("h3", "card-title", "Identifiers"));
+      append(
+        identifiers,
+        nodeWithText(
+          "h3",
+          "card-title font-['Inter_Variable',sans-serif]",
+          "Identifiers",
+        ),
+      );
       for (const identifier of book.identifiers) {
         append(
           identifiers,
@@ -798,7 +805,11 @@ async function showBook(bookOrId) {
       recommendations.className = "grid gap-3";
       append(
         recommendations,
-        nodeWithText("h3", "text-lg font-semibold", "Recommendation history"),
+        nodeWithText(
+          "h3",
+          "font-['Inter_Variable',sans-serif] text-lg font-semibold",
+          "Recommendation history",
+        ),
       );
       for (const recommendation of book.recommendations) {
         append(
@@ -886,7 +897,11 @@ async function loadProposals(conversationId = state.conversation?.id) {
     }
     append(
       drawerContent,
-      nodeWithText("h3", "text-lg font-semibold", "Pending changes"),
+      nodeWithText(
+        "h3",
+        "font-['Inter_Variable',sans-serif] text-lg font-semibold",
+        "Pending changes",
+      ),
     );
     for (const proposal of proposals) {
       append(

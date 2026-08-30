@@ -1,4 +1,7 @@
+import MarkdownIt from "markdown-it";
+
 const HTTP_PROTOCOLS = new Set(["http:", "https:"]);
+const markdown = new MarkdownIt({ html: false, linkify: true });
 
 function text(document, value) {
   return document.createTextNode(value == null ? "" : String(value));
@@ -60,6 +63,112 @@ export function safeHttpUrl(value) {
     return HTTP_PROTOCOLS.has(url.protocol.toLowerCase()) ? url.href : null;
   } catch {
     return null;
+  }
+}
+
+function appendMarkdownInline(document, parent, tokens) {
+  const stack = [parent];
+  for (const token of tokens) {
+    const current = stack.at(-1);
+    if (token.type === "text" || token.type === "html_inline") {
+      append(current, text(document, token.content));
+    } else if (token.type === "softbreak") {
+      append(current, text(document, " "));
+    } else if (token.type === "hardbreak") {
+      append(current, element(document, "br"));
+    } else if (token.type === "code_inline") {
+      const code = element(document, "code");
+      append(code, text(document, token.content));
+      append(current, code);
+    } else if (token.type === "image") {
+      const src = safeHttpUrl(token.attrGet("src"));
+      if (!src) {
+        append(current, text(document, token.content));
+        continue;
+      }
+      const image = element(document, "img");
+      image.src = src;
+      image.alt = token.content;
+      image.referrerPolicy = "no-referrer";
+      attribute(image, "src", src);
+      attribute(image, "alt", token.content);
+      attribute(image, "referrerpolicy", "no-referrer");
+      attribute(image, "loading", "lazy");
+      append(current, image);
+    } else if (["strong_open", "em_open", "s_open"].includes(token.type)) {
+      const tags = { strong_open: "strong", em_open: "em", s_open: "s" };
+      const child = element(document, tags[token.type]);
+      append(current, child);
+      stack.push(child);
+    } else if (["strong_close", "em_close", "s_close"].includes(token.type)) {
+      stack.pop();
+    } else if (token.type === "link_open") {
+      const href = safeHttpUrl(token.attrGet("href"));
+      const child = element(document, href ? "a" : "span");
+      if (href) attribute(child, "href", href);
+      append(current, child);
+      stack.push(child);
+    } else if (token.type === "link_close") {
+      stack.pop();
+    } else if (token.content) {
+      append(current, text(document, token.content));
+    }
+  }
+}
+
+function appendAssistantMarkdown(document, parent, value) {
+  const stack = [parent];
+  const blocks = {
+    paragraph_open: "p",
+    blockquote_open: "blockquote",
+    bullet_list_open: "ul",
+    ordered_list_open: "ol",
+    list_item_open: "li",
+    table_open: "table",
+    thead_open: "thead",
+    tbody_open: "tbody",
+    tr_open: "tr",
+    th_open: "th",
+    td_open: "td",
+  };
+  const blockClosers = new Set(
+    Object.keys(blocks).map((type) => type.replace(/_open$/u, "_close")),
+  );
+  for (const token of markdown.parse(messageText(value), {})) {
+    const current = stack.at(-1);
+    if (token.type === "inline") {
+      appendMarkdownInline(document, current, token.children || []);
+    } else if (token.type === "heading_open") {
+      const heading = element(
+        document,
+        /^h[1-6]$/u.test(token.tag) ? token.tag : "h2",
+        "font-['Inter_Variable',sans-serif]",
+      );
+      append(current, heading);
+      stack.push(heading);
+    } else if (token.type in blocks) {
+      const child = element(document, blocks[token.type]);
+      if (token.type === "ordered_list_open" && token.attrGet("start")) {
+        attribute(child, "start", token.attrGet("start"));
+      }
+      append(current, child);
+      stack.push(child);
+    } else if (
+      (token.type === "heading_close" || blockClosers.has(token.type)) &&
+      stack.length > 1
+    ) {
+      stack.pop();
+    } else if (token.type === "fence" || token.type === "code_block") {
+      const pre = element(document, "pre");
+      const code = element(document, "code");
+      append(code, text(document, token.content));
+      append(pre, code);
+      append(current, pre);
+    } else if (token.type === "hr") {
+      append(current, element(document, "hr"));
+    } else if (token.content) {
+      append(current, text(document, token.content));
+    }
   }
 }
 
@@ -130,9 +239,15 @@ export function renderMessage(document, message, options = {}) {
   const body = element(
     document,
     "div",
-    `chat-bubble whitespace-pre-wrap break-words${role === "user" ? " chat-bubble-primary" : ""}`,
+    role === "user"
+      ? "chat-bubble chat-bubble-primary whitespace-pre-wrap break-words"
+      : "chat-bubble prose max-w-none font-['Literata_Variable',serif] text-[15px] leading-relaxed dark:prose-invert",
   );
-  append(body, text(document, messageText(message?.content)));
+  if (role === "user") {
+    append(body, text(document, messageText(message?.content)));
+  } else {
+    appendAssistantMarkdown(document, body, message?.content);
+  }
   append(container, heading, body);
   if (incomplete) {
     const marker = element(
@@ -254,7 +369,11 @@ export function renderRecommendationCard(
   const cover = renderCover(document, book.coverUrl, book.title);
   if (cover) append(card, cover);
   const content = element(document, "div", "card-body min-w-0 p-4");
-  const title = element(document, "h3", "card-title");
+  const title = element(
+    document,
+    "h3",
+    "card-title font-['Inter_Variable',sans-serif]",
+  );
   append(title, text(document, primitiveText(book.title) || "Untitled"));
   const author = element(document, "p", "opacity-60");
   append(author, text(document, primitiveText(book.author)));
@@ -329,7 +448,11 @@ export function renderBookSummary(document, book, options = {}) {
   const cover = renderCover(document, book?.coverUrl, book?.title);
   if (cover) append(card, cover);
   const content = element(document, "div", "card-body min-w-0 p-4");
-  const title = element(document, "h3", "card-title");
+  const title = element(
+    document,
+    "h3",
+    "card-title font-['Inter_Variable',sans-serif]",
+  );
   append(title, text(document, primitiveText(book?.title) || "Untitled"));
   const author = element(document, "p", "opacity-60");
   append(author, text(document, primitiveText(book?.author)));
@@ -428,7 +551,11 @@ export function renderConversationList(document, conversations, options = {}) {
 export function renderProposal(document, proposal, options = {}) {
   const card = element(document, "article", "card bg-base-200 p-4");
   attribute(card, "data-proposal-id", proposal?.proposalId ?? "");
-  const heading = element(document, "h3", "card-title");
+  const heading = element(
+    document,
+    "h3",
+    "card-title font-['Inter_Variable',sans-serif]",
+  );
   append(heading, text(document, "Proposed change"));
   append(
     card,
@@ -460,7 +587,11 @@ export const renderChatMessage = renderMessage;
 
 export function renderBookDetails(document, book, options = {}) {
   const panel = element(document, "section", "card bg-base-200 p-4");
-  const heading = element(document, "h2", "card-title");
+  const heading = element(
+    document,
+    "h2",
+    "card-title font-['Inter_Variable',sans-serif]",
+  );
   append(heading, text(document, primitiveText(book?.title) || "Book"));
   append(panel, heading);
   const cover = renderCover(document, book?.coverUrl, book?.title);
@@ -485,7 +616,11 @@ export function renderBookDetails(document, book, options = {}) {
       "section",
       "mt-4 border-t border-base-300 pt-4",
     );
-    const title = element(document, "h3");
+    const title = element(
+      document,
+      "h3",
+      "font-['Inter_Variable',sans-serif] font-semibold",
+    );
     append(title, text(document, "Notes"));
     append(notes, title);
     for (const note of book.notes) {

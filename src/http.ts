@@ -66,8 +66,19 @@ const STATIC_FILES: Readonly<Record<string, { file: string; type: string }>> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/index.html": { file: "index.html", type: "text/html; charset=utf-8" },
   "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
-  "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
-  "/render.js": { file: "render.js", type: "text/javascript; charset=utf-8" },
+  "/app.bundle.js": {
+    file: "app.bundle.js",
+    type: "text/javascript; charset=utf-8",
+  },
+  "/fonts/inter.woff2": { file: "fonts/inter.woff2", type: "font/woff2" },
+  "/fonts/source-sans-3.woff2": {
+    file: "fonts/source-sans-3.woff2",
+    type: "font/woff2",
+  },
+  "/fonts/literata.woff2": {
+    file: "fonts/literata.woff2",
+    type: "font/woff2",
+  },
 };
 
 export const MAX_JSON_BODY_BYTES = DEFAULT_MAX_JSON_BODY_BYTES;
