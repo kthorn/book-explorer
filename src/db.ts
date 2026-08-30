@@ -308,6 +308,17 @@ export const LIBRARY_SQL = {
     INNER JOIN recommendation_citations AS rc ON rc.citation_id = c.id
     WHERE rc.recommendation_id = ?
     ORDER BY c.id`,
+  selectOpenLibraryCache: `
+    SELECT work_id, payload_version, payload, retrieved_at
+    FROM open_library_cache
+    WHERE work_id = ?`,
+  upsertOpenLibraryCache: `
+    INSERT INTO open_library_cache (work_id, payload_version, payload, retrieved_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(work_id) DO UPDATE SET
+      payload_version = excluded.payload_version,
+      payload = excluded.payload,
+      retrieved_at = excluded.retrieved_at`,
 } as const;
 
 function precreateDatabaseFile(path: string): void {
