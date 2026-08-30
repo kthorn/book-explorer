@@ -1,7 +1,6 @@
 import {
   chmodSync,
   closeSync,
-  existsSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -50,6 +49,8 @@ const DEFAULT_DATABASE_FILENAME = "book-explorer.sqlite";
 const DEFAULT_PORT = 3000;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
+
+let applicationActive = false;
 
 export interface StartupPaths extends ApplicationPaths {
   databasePath: string;
@@ -195,6 +196,16 @@ function pathInside(
   return normalizedCandidate;
 }
 
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function defaultDataDirectory(
   env: NodeJS.ProcessEnv = process.env,
   home: string = homedir(),
@@ -279,7 +290,7 @@ function ensureDirectory(
       throw configurationError(`${label} is not a safe directory: ${path}`);
     }
     if (isPosix(options)) {
-      const actual = info.mode & 0o777;
+      const actual = info.mode & 0o7777;
       if (actual !== PRIVATE_DIRECTORY_MODE) {
         throw permissionError(path, PRIVATE_DIRECTORY_MODE, actual);
       }
@@ -296,7 +307,7 @@ function ensureExistingFile(
   label: string,
   options: StorageOptions,
 ): boolean {
-  if (!existsSync(path)) return false;
+  if (!pathExists(path)) return false;
   let info;
   try {
     info = lstatSync(path);
@@ -307,7 +318,7 @@ function ensureExistingFile(
     throw configurationError(`${label} is not a regular file: ${path}`);
   }
   if (isPosix(options)) {
-    const actual = info.mode & 0o777;
+    const actual = info.mode & 0o7777;
     if (actual !== PRIVATE_FILE_MODE) {
       throw permissionError(path, PRIVATE_FILE_MODE, actual);
     }
@@ -321,7 +332,7 @@ function createPrivateFile(
   content: string,
   options: StorageOptions,
 ): void {
-  if (!existsSync(path)) {
+  if (!pathExists(path)) {
     try {
       writeFileSync(path, content, {
         encoding: "utf8",
@@ -336,7 +347,7 @@ function createPrivateFile(
 }
 
 function precreateDatabase(path: string, options: StorageOptions): void {
-  if (!existsSync(path)) {
+  if (!pathExists(path)) {
     try {
       const descriptor = openSync(path, "wx", PRIVATE_FILE_MODE);
       closeSync(descriptor);
@@ -358,13 +369,17 @@ function checkTree(path: string, label: string, options: StorageOptions): void {
       throw configurationError(`${label} contains a symbolic link: ${child}`);
     }
     if (info.isDirectory()) {
-      if (isPosix(options) && (info.mode & 0o777) !== PRIVATE_DIRECTORY_MODE) {
-        throw permissionError(child, PRIVATE_DIRECTORY_MODE, info.mode & 0o777);
+      if (isPosix(options) && (info.mode & 0o7777) !== PRIVATE_DIRECTORY_MODE) {
+        throw permissionError(
+          child,
+          PRIVATE_DIRECTORY_MODE,
+          info.mode & 0o7777,
+        );
       }
       checkTree(child, label, options);
     } else if (info.isFile()) {
-      if (isPosix(options) && (info.mode & 0o777) !== PRIVATE_FILE_MODE) {
-        throw permissionError(child, PRIVATE_FILE_MODE, info.mode & 0o777);
+      if (isPosix(options) && (info.mode & 0o7777) !== PRIVATE_FILE_MODE) {
+        throw permissionError(child, PRIVATE_FILE_MODE, info.mode & 0o7777);
       }
     } else {
       throw configurationError(
@@ -375,7 +390,7 @@ function checkTree(path: string, label: string, options: StorageOptions): void {
 }
 
 function resetPrivateCache(path: string, options: StorageOptions): void {
-  if (existsSync(path)) {
+  if (pathExists(path)) {
     let info;
     try {
       info = lstatSync(path);
@@ -390,8 +405,8 @@ function resetPrivateCache(path: string, options: StorageOptions): void {
         `Web search cache is not a safe directory: ${path}`,
       );
     }
-    if (isPosix(options) && (info.mode & 0o777) !== PRIVATE_DIRECTORY_MODE) {
-      throw permissionError(path, PRIVATE_DIRECTORY_MODE, info.mode & 0o777);
+    if (isPosix(options) && (info.mode & 0o7777) !== PRIVATE_DIRECTORY_MODE) {
+      throw permissionError(path, PRIVATE_DIRECTORY_MODE, info.mode & 0o7777);
     }
   }
   try {
@@ -456,7 +471,7 @@ export function ensureApplicationStorage(
   resetPrivateCache(paths.webSearchCacheDir, options);
 
   // Preserve the runtime's fail-closed checks before replacing an existing config.
-  if (existsSync(paths.webSearchConfigPath)) {
+  if (pathExists(paths.webSearchConfigPath)) {
     let current: unknown;
     try {
       current = JSON.parse(
@@ -518,7 +533,7 @@ export const ensureStoragePermissions = ensureApplicationStorage;
 function secureDatabaseSidecars(path: string, options: StorageOptions): void {
   if (!isPosix(options)) return;
   for (const sidecar of [`${path}-wal`, `${path}-shm`]) {
-    if (!existsSync(sidecar)) continue;
+    if (!pathExists(sidecar)) continue;
     const info = lstatSync(sidecar);
     if (info.isSymbolicLink() || !info.isFile()) {
       throw configurationError(
@@ -604,18 +619,33 @@ async function composeApplication(
   options: ApplicationOptions,
   dependencies: StartupDependencies,
 ): Promise<Application> {
-  const paths = resolveStartupPaths(options);
-  ensureApplicationStorage(paths, {
-    ...dependencies,
-    ...options,
-    platformChecks: options.platformChecks ?? dependencies.platformChecks,
-    warn: options.warn ?? dependencies.warn,
-  });
-
+  if (applicationActive) {
+    throw configurationError(
+      "A Book Explorer application composition is already active; await shutdown before starting another",
+    );
+  }
+  applicationActive = true;
+  let handedOff = false;
+  const releaseApplication = (): void => {
+    applicationActive = false;
+  };
+  let paths: StartupPaths;
   let db: Database | undefined;
   let registry: ConversationRegistry | undefined;
   let server: HttpServer | undefined;
   try {
+    paths = resolveStartupPaths(options);
+    ensureApplicationStorage(paths, {
+      ...dependencies,
+      ...options,
+      platformChecks: options.platformChecks ?? dependencies.platformChecks,
+      warn: options.warn ?? dependencies.warn,
+      platform: options.platform ?? dependencies.platform,
+      isWindows: options.isWindows ?? dependencies.isWindows,
+      isBroadlyAccessible:
+        options.isBroadlyAccessible ?? dependencies.isBroadlyAccessible,
+      checkWindowsAcl: options.checkWindowsAcl ?? dependencies.checkWindowsAcl,
+    });
     const dbFactory = dependencyValue(
       dependencies.openDatabase,
       dependencies.databaseFactory,
@@ -721,11 +751,13 @@ async function composeApplication(
         } catch (error) {
           failure ??= error;
         }
+        releaseApplication();
         if (failure) throw failure;
       })();
       return shutdownPromise;
     };
 
+    handedOff = true;
     return {
       paths,
       db,
@@ -749,6 +781,8 @@ async function composeApplication(
       if (db) closeDatabase(db);
     }
     throw error;
+  } finally {
+    if (!handedOff) releaseApplication();
   }
 }
 
@@ -798,11 +832,11 @@ export async function startApplication(
   if (host !== "127.0.0.1") {
     throw configurationError("Book Explorer may bind only to 127.0.0.1");
   }
+  const port = requestedPort(normalized.options);
   const application = await composeApplication(
     normalized.options,
     normalized.dependencies,
   );
-  const port = requestedPort(normalized.options);
   try {
     await listen(application.server, port, host);
   } catch (error) {

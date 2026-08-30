@@ -52,8 +52,13 @@ test(
         providers: ["openai-codex"],
         signal: AbortSignal.timeout(10_000),
       });
-      const [childResult] = await Promise.all([once(child, "exit"), refresh]);
+      const [childResult, refreshResult] = await Promise.all([
+        once(child, "exit"),
+        refresh,
+      ]);
       assert.equal((childResult as [number | null])[0], 0);
+      assert.equal(refreshResult.aborted, false);
+      assert.equal(refreshResult.errors.size, 0);
 
       const response = await fetch(
         `${origin}/api/conversations/${conversation.id}/messages`,
