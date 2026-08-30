@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   AgentSessionEvent,
+  ResourceLoader,
   SessionManager,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -87,7 +88,7 @@ export interface AgentSessionLike {
 
 export interface TurnSessionLike {
   session: AgentSessionLike;
-  loader: unknown;
+  loader: ResourceLoader;
 }
 
 export type TurnSessionFactory = (
@@ -133,8 +134,11 @@ class TurnCancelledError extends Error {
   }
 }
 
+type ActiveRequestPhase = "running" | "settling" | "terminal";
+
 interface ActiveRequest {
   requestId: string;
+  phase: ActiveRequestPhase;
   conversationId: number;
   cancelled: boolean;
   disconnect: boolean;
@@ -145,6 +149,7 @@ interface ActiveRequest {
   failure?: unknown;
   pendingFailure?: unknown;
   agentEndSeen: boolean;
+  modelCompleted: boolean;
   toolFailure?: unknown;
   citationTokens?: Set<string>;
   session?: AgentSessionLike;
@@ -168,7 +173,7 @@ function safeMessage(error: unknown): string {
   const message = raw.trim() || "Model turn failed";
   return message
     .replace(
-      /((?:api[_ -]?key|authorization|bearer|token)\s*[:=]\s*)\S+/giu,
+      /((?:(?:api[_ -]?key|authorization|token)\b\s*(?::|=)\s*(?:bearer\s+)?|bearer\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
       "$1[redacted]",
     )
     .slice(0, 1000);
@@ -344,7 +349,12 @@ export class TurnCoordinator {
 
   async cancel(requestId: string): Promise<boolean> {
     const active = this.active;
-    if (!active || active.requestId !== requestId) return false;
+    if (
+      !active ||
+      active.requestId !== requestId ||
+      active.phase !== "running"
+    )
+      return false;
     active.cancelled = true;
     void this.abortActive(active);
     return true;
@@ -381,6 +391,7 @@ export class TurnCoordinator {
     const requestId = input.retryRequestId ?? this.requestIdFactory();
     const active: ActiveRequest = {
       requestId,
+      phase: "running",
       conversationId: input.conversationId,
       cancelled: input.signal?.aborted ?? false,
       disconnect: false,
@@ -389,9 +400,11 @@ export class TurnCoordinator {
       sawText: false,
       incomplete: false,
       agentEndSeen: false,
+      modelCompleted: false,
     };
     this.active = active;
     const abortListener = () => {
+      if (active.phase !== "running") return;
       active.cancelled = true;
       void this.abortActive(active);
     };
@@ -480,20 +493,28 @@ export class TurnCoordinator {
               await this.emitError(active, active.failure, emit);
               return;
             }
-            if (active.toolFailure !== undefined) {
+            if (
+              active.toolFailure !== undefined &&
+              !active.modelCompleted
+            ) {
               await this.emitError(active, active.toolFailure, emit);
               return;
             }
             active.incomplete = active.incomplete || active.cancelled;
-            await this.deliver(
-              active,
-              {
-                type: "complete",
-                incomplete: active.incomplete,
-              },
-              emit,
-            );
-            active.normal = true;
+            active.phase = "settling";
+            try {
+              await this.deliver(
+                active,
+                {
+                  type: "complete",
+                  incomplete: active.incomplete,
+                },
+                emit,
+              );
+              active.normal = true;
+            } finally {
+              active.phase = "terminal";
+            }
           } catch (error) {
             if (active.disconnect) throw error;
             if (error instanceof TurnCancelledError) {
@@ -600,6 +621,8 @@ export class TurnCoordinator {
         active.failure = new TurnCancelledError();
       } else if (active.pendingFailure !== undefined) {
         active.failure = active.pendingFailure;
+      } else {
+        active.modelCompleted = true;
       }
     }
 
@@ -666,6 +689,7 @@ export class TurnCoordinator {
   private cleanup(active: ActiveRequest): Promise<void> {
     if (active.cleanupPromise) return active.cleanupPromise;
     active.cleanupPromise = (async () => {
+      active.phase = "terminal";
       try {
         active.unsubscribe?.();
       } catch {

@@ -11,6 +11,8 @@ import {
   SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
+  type ExtensionContext,
+  type ResourceLoader,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
@@ -44,6 +46,10 @@ interface Driver {
   markerSeen?: boolean;
   tools?: readonly ToolDefinition[];
   releasePrompt?: () => void;
+  abortGate?: Promise<void>;
+  abortStarted?: () => void;
+  disposeGate?: Promise<void>;
+  disposeStarted?: () => void;
   lastSession?: FakeSession;
 }
 
@@ -79,13 +85,17 @@ class FakeSession implements AgentSessionLike {
     this.driver.releasePrompt = undefined;
     this.driver.abortCount += 1;
     this.driver.lifecycle.push("abort-start");
+    this.driver.abortStarted?.();
+    if (this.driver.abortGate) await this.driver.abortGate;
     this.driver.lifecycle.push("abort-idle");
     this.driver.lifecycle.push("abort-end");
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     assert.equal(this.disposed, false, "session disposed more than once");
     this.disposed = true;
+    this.driver.disposeStarted?.();
+    if (this.driver.disposeGate) await this.driver.disposeGate;
     this.driver.disposeCount += 1;
     this.driver.lifecycle.push("dispose");
   }
@@ -236,6 +246,7 @@ async function createPublicPiTurnSession(
   manager: SessionManager,
   root: string,
   faux: ReturnType<typeof fauxProvider>,
+  contexts: ExtensionContext[],
 ): Promise<TurnSessionLike> {
   const agentDir = join(root, "agent");
   mkdirSync(agentDir, { recursive: true });
@@ -248,6 +259,13 @@ async function createPublicPiTurnSession(
     noThemes: true,
     noContextFiles: true,
     systemPrompt: "Book Explorer test prompt",
+    extensionFactories: [
+      (pi) => {
+        pi.on("agent_start", (_event, context) => {
+          contexts.push(context);
+        });
+      },
+    ],
   });
   const settingsManager = SettingsManager.inMemory({
     compaction: { keepRecentTokens: 1, reserveTokens: 100 },
@@ -541,6 +559,48 @@ test("stream maps text, tool, and captured citation events in order", async () =
   }
 });
 
+test("tool failure status does not terminalize a turn that later completes", async () => {
+  const item = fixture();
+  const driver = driverFixture(async (session) => {
+    session.emit({
+      type: "tool_execution_end",
+      toolCallId: "failed-call",
+      toolName: "upsert_book",
+      result: {} as never,
+      isError: true,
+    });
+    session.emit({
+      type: "message_update",
+      message: {} as never,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "answer",
+        partial: {} as never,
+      },
+    });
+    session.emit({ type: "agent_end", messages: [], willRetry: false });
+  });
+  try {
+    const service = coordinator(item, driver, ["request-tool-error"]);
+    const events = await collectSubmit(service, item.conversations[0]);
+    assert.deepEqual(events, [
+      {
+        type: "tool_status",
+        toolCallId: "failed-call",
+        toolName: "upsert_book",
+        status: "completed",
+        isError: true,
+      },
+      { type: "text_delta", delta: "answer" },
+      { type: "complete", incomplete: false },
+    ]);
+    assert.equal(driver.abortCount, 0);
+  } finally {
+    dispose(item);
+  }
+});
+
 test("turn proposal tool appends through the active manager without deadlocking the conversation gate", async () => {
   const item = fixture();
   const book = item.library.createOrFindBook({
@@ -608,6 +668,154 @@ test("global gate makes a second conversation visibly busy and releases only aft
     const third = await collectSubmit(service, item.conversations[1]);
     assert.deepEqual(third, [{ type: "complete", incomplete: false }]);
   } finally {
+    dispose(item);
+  }
+});
+
+test("late cancellation cannot abort a settling turn or race deferred disposal", async () => {
+  const item = fixture();
+  let releaseComplete!: () => void;
+  const completeGate = new Promise<void>((resolve) => {
+    releaseComplete = resolve;
+  });
+  let completeStarted!: () => void;
+  const completeSeen = new Promise<void>((resolve) => {
+    completeStarted = resolve;
+  });
+  let releaseDispose!: () => void;
+  const disposeGate = new Promise<void>((resolve) => {
+    releaseDispose = resolve;
+  });
+  let disposeStarted!: () => void;
+  const disposeSeen = new Promise<void>((resolve) => {
+    disposeStarted = resolve;
+  });
+  const driver = driverFixture();
+  driver.disposeGate = disposeGate;
+  driver.disposeStarted = disposeStarted;
+  const service = coordinator(item, driver, ["request-settling"]);
+  let first: Promise<void> | undefined;
+  try {
+    first = service.submit(
+      { conversationId: item.conversations[0], text: "finish" },
+      async (event) => {
+        if (event.type === "complete") {
+          completeStarted();
+          await completeGate;
+        }
+      },
+    );
+    await completeSeen;
+    assert.equal(await service.cancel("request-settling"), false);
+    assert.equal(driver.abortCount, 0);
+    releaseComplete();
+    await disposeSeen;
+    assert.equal(service.activeRequestId, "request-settling");
+    assert.equal(await service.cancel("request-settling"), false);
+    assert.equal(driver.abortCount, 0);
+    const busy = await collectSubmit(service, item.conversations[1]);
+    assert.deepEqual(busy, [
+      {
+        type: "error",
+        code: "global_busy",
+        message: "Another model turn is active",
+        retryable: true,
+      },
+    ]);
+    releaseDispose();
+    await first;
+    assert.equal(service.activeRequestId, undefined);
+    assert.equal(driver.abortCount, 0);
+  } finally {
+    releaseComplete();
+    releaseDispose();
+    await first?.catch(() => undefined);
+    dispose(item);
+  }
+});
+
+test("global gate stays busy through deferred abort and disposal", async () => {
+  const item = fixture();
+  let releaseAbort!: () => void;
+  const abortGate = new Promise<void>((resolve) => {
+    releaseAbort = resolve;
+  });
+  let abortStarted!: () => void;
+  const abortSeen = new Promise<void>((resolve) => {
+    abortStarted = resolve;
+  });
+  let releaseDispose!: () => void;
+  const disposeGate = new Promise<void>((resolve) => {
+    releaseDispose = resolve;
+  });
+  let disposeStarted!: () => void;
+  const disposeSeen = new Promise<void>((resolve) => {
+    disposeStarted = resolve;
+  });
+  let errorSeen!: () => void;
+  const errorEmitted = new Promise<void>((resolve) => {
+    errorSeen = resolve;
+  });
+  const driver = driverFixture(async () => {
+    throw new Error("deferred failure");
+  });
+  driver.abortGate = abortGate;
+  driver.abortStarted = abortStarted;
+  driver.disposeGate = disposeGate;
+  driver.disposeStarted = disposeStarted;
+  const service = coordinator(item, driver, ["request-deferred"]);
+  let first: Promise<void> | undefined;
+  try {
+    first = service.submit(
+      { conversationId: item.conversations[0], text: "fail" },
+      async (event) => {
+        if (event.type === "error") errorSeen();
+      },
+    );
+    await errorEmitted;
+    await abortSeen;
+    assert.equal(service.activeRequestId, "request-deferred");
+    assert.equal(await service.cancel("request-deferred"), false);
+    const busyDuringAbort = await collectSubmit(
+      service,
+      item.conversations[1],
+    );
+    assert.deepEqual(busyDuringAbort, [
+      {
+        type: "error",
+        code: "global_busy",
+        message: "Another model turn is active",
+        retryable: true,
+      },
+    ]);
+    releaseAbort();
+    await disposeSeen;
+    assert.equal(service.activeRequestId, "request-deferred");
+    const busyDuringDispose = await collectSubmit(
+      service,
+      item.conversations[1],
+    );
+    assert.deepEqual(busyDuringDispose, [
+      {
+        type: "error",
+        code: "global_busy",
+        message: "Another model turn is active",
+        retryable: true,
+      },
+    ]);
+    releaseDispose();
+    await first;
+    assert.equal(service.activeRequestId, undefined);
+    assert.deepEqual(driver.lifecycle, [
+      "abort-start",
+      "abort-idle",
+      "abort-end",
+      "dispose",
+    ]);
+  } finally {
+    releaseAbort();
+    releaseDispose();
+    await first?.catch(() => undefined);
     dispose(item);
   }
 });
@@ -714,6 +922,34 @@ test("turn error classification distinguishes auth, quota, search, and internal 
   }
 });
 
+test("turn error messages redact bearer and quoted credential values", async () => {
+  const item = fixture();
+  const bearer = "sk-bearer-secret-value";
+  const quotedApiKey = "quoted api secret-value";
+  const quotedToken = "single token secret-value";
+  const driver = driverFixture(async () => {
+    throw new Error(
+      `request failed Authorization: Bearer ${bearer} apiKey="${quotedApiKey}" token: '${quotedToken}'`,
+    );
+  });
+  try {
+    const service = coordinator(item, driver, ["request-safe-error"]);
+    const events = await collectSubmit(service, item.conversations[0]);
+    const error = events.at(-1);
+    assert.equal(error?.type, "error");
+    if (error?.type === "error") {
+      assert.equal(error.message.includes(bearer), false);
+      assert.equal(error.message.includes(quotedApiKey), false);
+      assert.equal(error.message.includes(quotedToken), false);
+      assert.match(error.message, /Bearer \[redacted\]/);
+      assert.match(error.message, /apiKey=\[redacted\]/);
+      assert.match(error.message, /token: \[redacted\]/);
+    }
+  } finally {
+    dispose(item);
+  }
+});
+
 test("turn length-limited output completes as incomplete without treating it as a full response", async () => {
   const item = fixture();
   const driver = driverFixture(async (session) => {
@@ -760,7 +996,9 @@ test("compaction uses public Pi APIs for reopen and a fresh loader in one proces
     fauxAssistantMessage("second compaction"),
     fauxAssistantMessage("second split compaction"),
   ]);
-  const loaders: unknown[] = [];
+  const loaders: ResourceLoader[] = [];
+  const sessions: AgentSessionLike[] = [];
+  const contexts: ExtensionContext[] = [];
   let registry = item.registry;
   try {
     const createCoordinator = (currentRegistry: ConversationRegistry) =>
@@ -774,8 +1012,10 @@ test("compaction uses public Pi APIs for reopen and a fresh loader in one proces
             manager,
             item.root,
             faux,
+            contexts,
           );
           loaders.push(turn.loader);
+          sessions.push(turn.session);
           return turn;
         },
       });
@@ -791,6 +1031,8 @@ test("compaction uses public Pi APIs for reopen and a fresh loader in one proces
         manager.getEntries().filter((entry) => entry.type === "compaction"),
     );
     assert.equal(firstCompactions.length, 1);
+    assert.ok(contexts.length > 0);
+    assert.throws(() => contexts[0]!.model, /stale after session replacement/);
 
     registry.close();
     registry = new ConversationRegistry(item.db, {
@@ -818,7 +1060,17 @@ test("compaction uses public Pi APIs for reopen and a fresh loader in one proces
       true,
     );
     assert.equal(loaders.length, 2);
+    assert.equal(
+      typeof (loaders[0] as { dispose?: unknown }).dispose,
+      "undefined",
+    );
     assert.notEqual(loaders[0], loaders[1]);
+    assert.equal(sessions.length, 2);
+    assert.notEqual(sessions[0], sessions[1]);
+    assert.throws(
+      () => contexts.at(-1)!.model,
+      /stale after session replacement/,
+    );
   } finally {
     registry.close();
     closeDatabase(item.db);
