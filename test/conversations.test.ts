@@ -184,6 +184,38 @@ test('removes a tombstone and orphan session when no row references them', () =>
   }
 });
 
+test('preserves a referenced session filename that itself ends in .deleting', () => {
+  const item = fixture();
+  try {
+    const path = join(item.sessions, 'session.jsonl.deleting');
+    writeSessionHeader(path, item.root);
+    const id = row(item, 'session.jsonl.deleting');
+    item.registry.close();
+    const reopened = new ConversationRegistry(item.db, { cwd: item.root, sessionDir: item.sessions });
+    assert.equal(existsSync(path), true);
+    assert.equal(reopened.get(id)?.sessionFilename, 'session.jsonl.deleting');
+    reopened.close();
+  } finally {
+    dispose(item);
+  }
+});
+
+test('recursively removes nested orphan session files', () => {
+  const item = fixture();
+  try {
+    const nested = join(item.sessions, 'nested');
+    mkdirSync(nested, { mode: 0o700 });
+    const orphan = join(nested, 'orphan.jsonl');
+    writeSessionHeader(orphan, item.root);
+    item.registry.close();
+    const reopened = new ConversationRegistry(item.db, { cwd: item.root, sessionDir: item.sessions });
+    assert.equal(existsSync(orphan), false);
+    reopened.close();
+  } finally {
+    dispose(item);
+  }
+});
+
 test('fails startup for a missing or corrupt referenced file', () => {
   const missing = fixture();
   try {

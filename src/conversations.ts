@@ -7,6 +7,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -520,21 +521,36 @@ export class ConversationRegistry {
       const filename = row.session_filename;
       if (typeof filename !== 'string') throw new ConversationDataRecoveryError(`conversation ${String(row.id)} has no session filename`);
       const path = this.referencePath(filename);
+      referenced.set(normalizedRelativePath(relative(this.sessionDir, path)), path);
+    }
+
+    for (const path of referenced.values()) {
       const tombstone = `${path}.deleting`;
       if (fileExists(tombstone)) {
         this.validateArtifactPath(tombstone);
         if (fileExists(path)) unlinkSync(tombstone);
         else renameSync(tombstone, path);
       }
-      referenced.set(normalizedRelativePath(relative(this.sessionDir, path)), path);
     }
+    this.removeOrphanSessionFiles(this.realSessionDir, referenced);
+  }
 
-    for (const entry of readdirSync(this.realSessionDir, { withFileTypes: true })) {
-      if (entry.isDirectory()) continue;
-      const path = join(this.realSessionDir, entry.name);
-      const isTombstone = entry.name.endsWith('.deleting');
-      const candidateName = isTombstone ? entry.name.slice(0, -'.deleting'.length) : entry.name;
-      if (!referenced.has(normalizedRelativePath(candidateName))) unlinkSync(path);
+  private removeOrphanSessionFiles(directory: string, referenced: ReadonlyMap<string, string>): void {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        this.removeOrphanSessionFiles(path, referenced);
+        if (readdirSync(path).length === 0) rmdirSync(path);
+        continue;
+      }
+      const relativeName = normalizedRelativePath(relative(this.sessionDir, path));
+      if (referenced.has(relativeName)) continue;
+      if (entry.name.endsWith('.deleting')) {
+        const originalName = entry.name.slice(0, -'.deleting'.length);
+        const originalPath = join(directory, originalName);
+        if (referenced.has(normalizedRelativePath(relative(this.sessionDir, originalPath)))) continue;
+      }
+      unlinkSync(path);
     }
   }
 

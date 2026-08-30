@@ -199,6 +199,7 @@ function proposalFromEntry(entry: Extract<SessionEntry, { type: 'custom' }>, con
     kind = normalizeProposalKind(data.kind);
     value = normalizeProposalValue(kind, data.value);
     positiveInteger(data.bookId, 'Book ID');
+    if (proposalId !== deterministicProposalId(requestId, kind, Number(data.bookId), semanticSlot)) return null;
   } catch {
     return null;
   }

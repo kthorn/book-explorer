@@ -202,6 +202,26 @@ test('ignores malformed proposal entries during reconstruction', async () => {
   }
 });
 
+test('ignores persisted proposals whose ID does not match the deterministic hash', async () => {
+  const item = fixture();
+  try {
+    await item.registry.withConversation(item.conversationId, (manager: SessionManager) => {
+      manager.appendCustomEntry('book-explorer-proposed-change', {
+        proposalId: 'not-the-deterministic-id',
+        requestId: 'request-hash',
+        bookId: item.bookId,
+        kind: 'status',
+        value: 'read',
+        semanticSlot: 'reading-status',
+        explanation: 'The user explicitly said they finished it.',
+      });
+    });
+    assert.deepEqual(await listPendingProposals(item.registry, item.conversationId), []);
+  } finally {
+    dispose(item);
+  }
+});
+
 test('rejects a proposal without changing approved library state', async () => {
   const item = fixture();
   try {
