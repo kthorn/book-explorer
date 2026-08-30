@@ -12,7 +12,9 @@ const live = process.env.BOOK_EXPLORER_LIVE_TEST === "1";
 
 test(
   "live Pi OAuth, Codex search citations, streaming, and refresh locking",
-  { skip: !live },
+  {
+    skip: !live,
+  },
   async () => {
     const application = await startApplication({ port: 0 });
     try {
