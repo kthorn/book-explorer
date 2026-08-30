@@ -76,11 +76,15 @@ function errorMessage(error) {
 function toast(message) {
   const node = byId("toast");
   if (!node) return;
-  setText(node, message);
+  setText(byId("toast-message"), message);
   node.hidden = false;
   window.setTimeout(() => {
     node.hidden = true;
   }, 4500);
+}
+
+function openDrawer() {
+  if (drawer && !drawer.open) drawer.showModal();
 }
 
 function mutationHeaders() {
@@ -356,23 +360,23 @@ function updateToolActivity(context, text) {
 function finishToolActivity(context) {
   if (!currentStream(context) || !context.activityNode) return;
   setText(context.activityNode, summarizeToolActivity(context));
-  context.activityNode.className = "tool-activity";
+  context.activityNode.className = "text-sm opacity-60";
 }
 
 function createAssistantOutput(context) {
   context.assistantNode = renderAssistantMessage(document, "", false);
   const wrapper = document.createElement("section");
-  wrapper.className = "assistant-output";
+  wrapper.className = "space-y-2";
   context.activityNode = nodeWithText(
     "p",
-    "tool-activity tool-activity-working",
+    "text-sm opacity-60",
     "Assistant is working…",
   );
   context.activityNode.setAttribute("role", "status");
   context.activityNode.setAttribute("aria-live", "polite");
   append(wrapper, context.activityNode, context.assistantNode);
   context.recommendationNode = document.createElement("div");
-  context.recommendationNode.className = "stream-recommendations";
+  context.recommendationNode.className = "mt-3 grid gap-3";
   append(wrapper, context.recommendationNode);
   append(transcript, wrapper);
 }
@@ -430,7 +434,11 @@ function handleStreamEvent(event, context) {
     updateAssistant(context, event.incomplete === true);
     append(
       transcript,
-      nodeWithText("p", "stream-error", event.message || "Model turn failed"),
+      nodeWithText(
+        "p",
+        "alert alert-error my-2",
+        event.message || "Model turn failed",
+      ),
     );
     markStreamTerminal(context, event);
   }
@@ -463,7 +471,7 @@ async function sendMessage(text) {
       if (streamNeedsIncomplete(context)) updateAssistant(context, true);
       append(
         transcript,
-        nodeWithText("p", "stream-error", errorMessage(error)),
+        nodeWithText("p", "alert alert-error my-2", errorMessage(error)),
       );
     }
   } finally {
@@ -546,9 +554,10 @@ async function loadLibrary() {
 
 function formField(form, label, name, value, type = "text") {
   const wrapper = document.createElement("label");
-  wrapper.className = "editor-field";
+  wrapper.className = "form-control gap-1 text-sm";
   wrapper.appendChild(document.createTextNode(label));
   const input = document.createElement("input");
+  input.className = "input input-bordered w-full";
   input.name = name;
   input.type = type;
   input.value = value == null ? "" : String(value);
@@ -559,9 +568,10 @@ function formField(form, label, name, value, type = "text") {
 
 function selectField(form, label, name, value, choices) {
   const wrapper = document.createElement("label");
-  wrapper.className = "editor-field";
+  wrapper.className = "form-control gap-1 text-sm";
   wrapper.appendChild(document.createTextNode(label));
   const select = document.createElement("select");
+  select.className = "select select-bordered w-full";
   select.name = name;
   for (const choice of choices) {
     const option = document.createElement("option");
@@ -577,7 +587,7 @@ function selectField(form, label, name, value, choices) {
 
 function renderBookEditor(book) {
   const form = document.createElement("form");
-  form.className = "book-editor";
+  form.className = "mt-4 grid gap-3";
   formField(form, "Title", "title", book.title);
   formField(form, "Author", "author", book.author);
   formField(
@@ -612,7 +622,7 @@ function renderBookEditor(book) {
     })),
   ]);
   const identifierField = document.createElement("label");
-  identifierField.className = "editor-field";
+  identifierField.className = "form-control gap-1 text-sm";
   identifierField.appendChild(
     document.createTextNode(
       "Identifiers (scheme | value | source, one per line)",
@@ -620,6 +630,7 @@ function renderBookEditor(book) {
   );
   const identifiers = document.createElement("textarea");
   identifiers.name = "identifiers";
+  identifiers.className = "textarea textarea-bordered w-full";
   identifiers.rows = 4;
   identifiers.value = (book.identifiers || [])
     .map(
@@ -629,7 +640,7 @@ function renderBookEditor(book) {
     .join("\n");
   identifierField.appendChild(identifiers);
   form.appendChild(identifierField);
-  const save = nodeWithText("button", "button button-primary", "Save book");
+  const save = nodeWithText("button", "btn btn-primary", "Save book");
   save.type = "submit";
   form.appendChild(save);
   form.addEventListener("submit", async (event) => {
@@ -745,8 +756,8 @@ async function showBook(bookOrId) {
     );
     if (Array.isArray(book.identifiers) && book.identifiers.length) {
       const identifiers = document.createElement("section");
-      identifiers.className = "book-identifiers";
-      append(identifiers, nodeWithText("h3", null, "Identifiers"));
+      identifiers.className = "card bg-base-200 p-4";
+      append(identifiers, nodeWithText("h3", "card-title", "Identifiers"));
       for (const identifier of book.identifiers) {
         append(
           identifiers,
@@ -757,10 +768,10 @@ async function showBook(bookOrId) {
     }
     if (Array.isArray(book.recommendations) && book.recommendations.length) {
       const recommendations = document.createElement("section");
-      recommendations.className = "book-recommendations";
+      recommendations.className = "grid gap-3";
       append(
         recommendations,
-        nodeWithText("h3", null, "Recommendation history"),
+        nodeWithText("h3", "text-lg font-semibold", "Recommendation history"),
       );
       for (const recommendation of book.recommendations) {
         append(
@@ -774,7 +785,7 @@ async function showBook(bookOrId) {
       }
       append(drawerContent, recommendations);
     }
-    drawer.hidden = false;
+    openDrawer();
   } catch (error) {
     toast(errorMessage(error));
   }
@@ -826,7 +837,11 @@ async function loadProposals(conversationId = state.conversation?.id) {
     clear(drawerContent);
     append(
       drawerContent,
-      nodeWithText("p", "empty-state", "Select a book or pending change."),
+      nodeWithText(
+        "p",
+        "py-8 text-center opacity-60",
+        "Select a book or pending change.",
+      ),
     );
     return;
   }
@@ -838,11 +853,14 @@ async function loadProposals(conversationId = state.conversation?.id) {
     if (!Array.isArray(proposals) || !proposals.length) {
       append(
         drawerContent,
-        nodeWithText("p", "empty-state", "No pending changes."),
+        nodeWithText("p", "py-8 text-center opacity-60", "No pending changes."),
       );
       return;
     }
-    append(drawerContent, nodeWithText("h3", null, "Pending changes"));
+    append(
+      drawerContent,
+      nodeWithText("h3", "text-lg font-semibold", "Pending changes"),
+    );
     for (const proposal of proposals) {
       append(
         drawerContent,
@@ -866,9 +884,8 @@ function wire() {
     await loadSeries();
     await loadLibrary();
   });
-  byId("close-drawer")?.addEventListener("click", () => {
-    drawer.hidden = true;
-  });
+  byId("open-drawer")?.addEventListener("click", openDrawer);
+  byId("close-drawer")?.addEventListener("click", () => drawer?.close());
   byId("library-filters")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     await loadLibrary();

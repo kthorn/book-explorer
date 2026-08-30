@@ -1,47 +1,124 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>Book Explorer</title>
-    <link rel="stylesheet" href="/styles.css">
-    <script id="csrf-token" type="application/json">__BOOK_EXPLORER_CSRF_TOKEN__</script>
+    <link rel="stylesheet" href="/styles.css" />
+    <script id="csrf-token" type="application/json">
+      __BOOK_EXPLORER_CSRF_TOKEN__
+    </script>
     <script type="module" src="/app.js"></script>
   </head>
-  <body>
-    <div id="app" class="app-shell">
-      <aside class="sidebar" aria-label="Conversations">
-        <header class="sidebar-header">
-          <h1>Book Explorer</h1>
-          <button id="new-conversation" class="button button-primary" type="button">New conversation</button>
+  <body class="min-h-screen bg-base-200">
+    <div
+      id="app"
+      class="grid min-h-screen grid-cols-1 lg:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_20rem]"
+    >
+      <aside
+        class="flex min-w-0 flex-col gap-4 border-b border-base-300 bg-base-100 p-4 lg:min-h-screen lg:border-r lg:border-b-0"
+        aria-label="Conversations"
+      >
+        <header class="flex flex-col items-start gap-3">
+          <h1 class="text-xl font-bold">Book Explorer</h1>
+          <button
+            id="new-conversation"
+            class="btn btn-primary btn-sm"
+            type="button"
+          >
+            New conversation
+          </button>
         </header>
-        <div id="conversation-list" class="conversation-list" aria-live="polite"></div>
-        <button id="library-link" class="sidebar-link" type="button">Library</button>
+        <div
+          id="conversation-list"
+          class="grow overflow-y-auto"
+          aria-live="polite"
+        ></div>
+        <button
+          id="library-link"
+          class="btn btn-ghost justify-start"
+          type="button"
+        >
+          Library
+        </button>
       </aside>
 
-      <main class="main-panel">
-        <header class="main-header">
-          <div>
-            <p class="eyebrow">Recommendation workspace</p>
-            <h2 id="view-title">Conversation</h2>
+      <main class="flex min-h-screen min-w-0 flex-col">
+        <header
+          class="navbar min-h-19 border-b border-base-300 bg-base-100 px-6"
+        >
+          <div class="flex-1">
+            <div>
+              <p class="text-xs tracking-widest uppercase opacity-60">
+                Recommendation workspace
+              </p>
+              <h2 id="view-title" class="text-lg font-semibold">
+                Conversation
+              </h2>
+            </div>
           </div>
-          <button id="cancel-turn" class="button button-danger" type="button" hidden>Stop</button>
+          <button id="open-drawer" class="btn btn-ghost btn-sm" type="button">
+            Details
+          </button>
+          <button
+            id="cancel-turn"
+            class="btn btn-error btn-sm"
+            type="button"
+            hidden
+          >
+            Stop
+          </button>
         </header>
-        <section id="chat-view" class="chat-view" aria-live="polite">
-          <div id="transcript" class="transcript"></div>
-          <p id="chat-empty" class="empty-state">Choose a conversation to start exploring books.</p>
-          <form id="message-form" class="message-form">
+        <section
+          id="chat-view"
+          class="mx-auto w-full max-w-4xl grow p-4 lg:p-6"
+          aria-live="polite"
+        >
+          <div id="transcript" class="flex flex-col gap-4"></div>
+          <p id="chat-empty" class="py-8 text-center opacity-60">
+            Choose a conversation to start exploring books.
+          </p>
+          <form
+            id="message-form"
+            class="sticky bottom-0 mt-6 grid grid-cols-[minmax(0,1fr)_auto] gap-3 bg-base-200 pt-4"
+          >
             <label class="sr-only" for="message-input">Message</label>
-            <textarea id="message-input" rows="3" maxlength="100000" placeholder="Ask for a recommendation or talk about a book" required></textarea>
-            <button class="button button-primary" type="submit">Send</button>
+            <textarea
+              id="message-input"
+              class="textarea textarea-bordered w-full"
+              rows="3"
+              maxlength="100000"
+              placeholder="Ask for a recommendation or talk about a book"
+              required
+            ></textarea>
+            <button class="btn btn-primary" type="submit">Send</button>
           </form>
         </section>
-        <section id="library-view" class="library-view" hidden>
-          <form id="library-filters" class="filters">
-            <label>Search <input id="library-query" name="query" type="search"></label>
-            <label>Status
-              <select id="library-status" name="status">
+        <section
+          id="library-view"
+          class="mx-auto w-full max-w-5xl grow p-4 lg:p-6"
+          hidden
+        >
+          <form
+            id="library-filters"
+            class="mb-4 grid grid-cols-1 gap-3 rounded-box bg-base-100 p-4 shadow-sm sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_10rem_7.5rem_10rem_auto] xl:items-end"
+          >
+            <label class="form-control gap-1 text-sm"
+              >Search
+              <input
+                id="library-query"
+                class="input input-bordered w-full"
+                name="query"
+                type="search"
+            /></label>
+            <label class="form-control gap-1 text-sm"
+              >Status
+              <select
+                id="library-status"
+                class="select select-bordered w-full"
+                name="status"
+              >
                 <option value="">Any</option>
                 <option value="recommended">Recommended</option>
                 <option value="interested">Interested</option>
@@ -51,8 +128,13 @@
                 <option value="not_interested">Not interested</option>
               </select>
             </label>
-            <label>Rating
-              <select id="library-rating" name="rating">
+            <label class="form-control gap-1 text-sm"
+              >Rating
+              <select
+                id="library-rating"
+                class="select select-bordered w-full"
+                name="rating"
+              >
                 <option value="">Any</option>
                 <option value="1">1</option>
                 <option value="2">2</option>
@@ -61,27 +143,53 @@
                 <option value="5">5</option>
               </select>
             </label>
-            <label>Series
-              <select id="library-series" name="seriesId">
+            <label class="form-control gap-1 text-sm"
+              >Series
+              <select
+                id="library-series"
+                class="select select-bordered w-full"
+                name="seriesId"
+              >
                 <option value="">Any</option>
               </select>
             </label>
-            <button class="button button-secondary" type="submit">Filter</button>
+            <button class="btn btn-neutral" type="submit">Filter</button>
           </form>
-          <div id="library-list" class="library-list"></div>
+          <div id="library-list"></div>
         </section>
       </main>
 
-      <aside id="drawer" class="drawer" aria-label="Book details and approvals">
-        <div class="drawer-header">
-          <h2>Details</h2>
-          <button id="close-drawer" class="button button-secondary" type="button">Close</button>
+      <dialog
+        id="drawer"
+        class="modal modal-end"
+        aria-label="Book details and approvals"
+      >
+        <div class="modal-box ml-auto h-full max-h-none w-full max-w-md rounded-none">
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold">Details</h2>
+            <button id="close-drawer" class="btn btn-ghost btn-sm" type="button">
+              Close
+            </button>
+          </div>
+          <div id="drawer-content" class="mt-4 grid gap-4">
+            <p class="py-8 text-center opacity-60">
+              Select a book or pending change.
+            </p>
+          </div>
         </div>
-        <div id="drawer-content" class="drawer-content">
-          <p class="empty-state">Select a book or pending change.</p>
-        </div>
-      </aside>
+        <form method="dialog" class="modal-backdrop">
+          <button>Close details</button>
+        </form>
+      </dialog>
     </div>
-    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <div
+      id="toast"
+      class="toast toast-end toast-bottom z-30"
+      role="status"
+      aria-live="polite"
+      hidden
+    >
+      <div class="alert alert-info"><span id="toast-message"></span></div>
+    </div>
   </body>
 </html>

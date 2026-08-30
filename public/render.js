@@ -20,22 +20,30 @@ function append(parent, ...children) {
 }
 
 function attribute(node, name, value) {
-  if (typeof node.setAttribute === "function") node.setAttribute(name, String(value));
+  if (typeof node.setAttribute === "function")
+    node.setAttribute(name, String(value));
 }
 
 function on(node, eventName, listener) {
-  if (typeof node.addEventListener === "function") node.addEventListener(eventName, listener);
+  if (typeof node.addEventListener === "function")
+    node.addEventListener(eventName, listener);
 }
 
 function primitiveText(value) {
   if (value == null) return "";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  )
+    return String(value);
   return "";
 }
 
 function messageText(value) {
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
   if (Array.isArray(value)) return value.map(messageText).join("");
   if (value && typeof value === "object") {
     const part = value;
@@ -92,7 +100,8 @@ export function isCurrentStream(context, activeContext, conversationId) {
 }
 
 export function markStreamTerminal(context, event) {
-  if (event?.type === "complete" || event?.type === "error") context.terminal = true;
+  if (event?.type === "complete" || event?.type === "error")
+    context.terminal = true;
   return context.terminal;
 }
 
@@ -102,18 +111,35 @@ export function streamNeedsIncomplete(context) {
 
 export function renderMessage(document, message, options = {}) {
   const role = message?.role === "user" ? "user" : "assistant";
-  const incomplete = message?.incomplete === true || options.incomplete === true;
-  const container = element(document, "article", `message message-${role}${incomplete ? " message-incomplete" : ""}`);
+  const incomplete =
+    message?.incomplete === true || options.incomplete === true;
+  const container = element(
+    document,
+    "article",
+    `chat ${role === "user" ? "chat-end" : "chat-start"}${incomplete ? " message-incomplete" : ""}`,
+  );
   attribute(container, "data-role", role);
   if (incomplete) attribute(container, "data-incomplete", "true");
 
-  const heading = element(document, "div", "message-role");
+  const heading = element(
+    document,
+    "div",
+    "chat-header mb-1 text-xs opacity-60",
+  );
   append(heading, text(document, role === "user" ? "You" : "Assistant"));
-  const body = element(document, "div", "message-text");
+  const body = element(
+    document,
+    "div",
+    `chat-bubble whitespace-pre-wrap break-words${role === "user" ? " chat-bubble-primary" : ""}`,
+  );
   append(body, text(document, messageText(message?.content)));
   append(container, heading, body);
   if (incomplete) {
-    const marker = element(document, "span", "message-state");
+    const marker = element(
+      document,
+      "span",
+      "chat-footer mt-1 text-xs text-warning",
+    );
     append(marker, text(document, "Incomplete response"));
     append(container, marker);
   }
@@ -127,7 +153,7 @@ export function renderAssistantMessage(document, content, incomplete = false) {
 export function renderCitation(document, citation) {
   const href = safeHttpUrl(citation?.url);
   if (!href) return null;
-  const link = element(document, "a", "citation-link");
+  const link = element(document, "a", "link link-primary");
   link.href = href;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
@@ -139,16 +165,20 @@ export function renderCitation(document, citation) {
 }
 
 export function renderCitations(document, citations) {
-  const sources = element(document, "section", "citations");
+  const sources = element(document, "section", "mt-3 text-sm");
   append(sources, text(document, "Sources"));
-  const list = element(document, "ul", "citation-list");
+  const list = element(document, "ul", "mt-1 list-disc space-y-1 pl-5");
   for (const citation of Array.isArray(citations) ? citations : []) {
     const link = renderCitation(document, citation);
     if (!link) continue;
     const item = element(document, "li");
     append(item, link);
     if (typeof citation?.snippet === "string" && citation.snippet) {
-      const snippet = element(document, "span", "citation-snippet");
+      const snippet = element(
+        document,
+        "span",
+        "block whitespace-pre-wrap break-words text-xs opacity-60",
+      );
       append(snippet, text(document, citation.snippet));
       append(item, text(document, " — "), snippet);
     }
@@ -161,7 +191,11 @@ export function renderCitations(document, citations) {
 export function renderCover(document, coverUrl, alt = "") {
   const src = safeHttpUrl(coverUrl);
   if (!src) return null;
-  const image = element(document, "img", "book-cover");
+  const image = element(
+    document,
+    "img",
+    "h-28 w-20 shrink-0 rounded-box bg-base-300 object-cover",
+  );
   image.src = src;
   image.alt = primitiveText(alt);
   image.referrerPolicy = "no-referrer";
@@ -177,10 +211,18 @@ function bookFor(value) {
   return value?.book && typeof value.book === "object" ? value.book : value;
 }
 
-function field(document, label, value, className = "book-field") {
-  const row = element(document, "div", className);
-  const name = element(document, "dt");
-  const content = element(document, "dd");
+function field(document, label, value, className = "") {
+  const row = element(
+    document,
+    "div",
+    `grid grid-cols-[6rem_minmax(0,1fr)] gap-2 py-1 ${className}`,
+  );
+  const name = element(document, "dt", "text-sm opacity-60");
+  const content = element(
+    document,
+    "dd",
+    "min-w-0 whitespace-pre-wrap break-words",
+  );
   append(name, text(document, label));
   append(content, text(document, primitiveText(value) || "—"));
   append(row, name, content);
@@ -188,7 +230,7 @@ function field(document, label, value, className = "book-field") {
 }
 
 function actionButton(document, label, action, callback) {
-  const button = element(document, "button", "button button-secondary");
+  const button = element(document, "button", "btn btn-ghost btn-sm");
   button.type = "button";
   attribute(button, "type", "button");
   attribute(button, "data-action", action);
@@ -197,29 +239,67 @@ function actionButton(document, label, action, callback) {
   return button;
 }
 
-export function renderRecommendationCard(document, recommendation, options = {}) {
+export function renderRecommendationCard(
+  document,
+  recommendation,
+  options = {},
+) {
   const book = bookFor(recommendation) || {};
-  const card = element(document, "article", "recommendation-card");
+  const card = element(
+    document,
+    "article",
+    "card card-side bg-base-100 shadow-sm",
+  );
   if (book.id != null) attribute(card, "data-book-id", book.id);
   const cover = renderCover(document, book.coverUrl, book.title);
   if (cover) append(card, cover);
-  const content = element(document, "div", "recommendation-content");
-  const title = element(document, "h3");
+  const content = element(document, "div", "card-body min-w-0 p-4");
+  const title = element(document, "h3", "card-title");
   append(title, text(document, primitiveText(book.title) || "Untitled"));
-  const author = element(document, "p", "book-author");
+  const author = element(document, "p", "opacity-60");
   append(author, text(document, primitiveText(book.author)));
   append(content, title, author);
   if (book.seriesName || book.seriesPosition) {
-    append(content, field(document, "Series", [book.seriesName, book.seriesPosition].filter(Boolean).join(" · "), "recommendation-series"));
+    append(
+      content,
+      field(
+        document,
+        "Series",
+        [book.seriesName, book.seriesPosition].filter(Boolean).join(" · "),
+        "recommendation-series",
+      ),
+    );
   }
-  append(content, field(document, "Rationale", recommendation?.rationale, "recommendation-rationale"));
-  if (recommendation?.cautions) append(content, field(document, "Cautions", recommendation.cautions, "recommendation-cautions"));
-  append(content, field(document, "Status", book.status, "recommendation-status"));
+  append(
+    content,
+    field(
+      document,
+      "Rationale",
+      recommendation?.rationale,
+      "recommendation-rationale",
+    ),
+  );
+  if (recommendation?.cautions)
+    append(
+      content,
+      field(
+        document,
+        "Cautions",
+        recommendation.cautions,
+        "recommendation-cautions",
+      ),
+    );
+  append(
+    content,
+    field(document, "Status", book.status, "recommendation-status"),
+  );
 
-  const citations = Array.isArray(recommendation?.citations) ? recommendation.citations : [];
+  const citations = Array.isArray(recommendation?.citations)
+    ? recommendation.citations
+    : [];
   if (citations.length) append(content, renderCitations(document, citations));
 
-  const actions = element(document, "div", "recommendation-actions");
+  const actions = element(document, "div", "card-actions mt-3 flex-wrap");
   const buttons = [
     ["Interested", "interested"],
     ["Reading", "reading"],
@@ -227,7 +307,12 @@ export function renderRecommendationCard(document, recommendation, options = {})
     ["Open book", "open"],
   ];
   for (const [label, action] of buttons) {
-    append(actions, actionButton(document, label, action, (name) => options.onAction?.(name, recommendation)));
+    append(
+      actions,
+      actionButton(document, label, action, (name) =>
+        options.onAction?.(name, recommendation),
+      ),
+    );
   }
   append(content, actions);
   append(card, content);
@@ -235,32 +320,45 @@ export function renderRecommendationCard(document, recommendation, options = {})
 }
 
 export function renderBookSummary(document, book, options = {}) {
-  const card = element(document, "article", "book-card");
+  const card = element(
+    document,
+    "article",
+    "card card-side bg-base-100 shadow-sm",
+  );
   attribute(card, "data-book-id", book?.id ?? "");
   const cover = renderCover(document, book?.coverUrl, book?.title);
   if (cover) append(card, cover);
-  const content = element(document, "div", "book-card-content");
-  const title = element(document, "h3");
+  const content = element(document, "div", "card-body min-w-0 p-4");
+  const title = element(document, "h3", "card-title");
   append(title, text(document, primitiveText(book?.title) || "Untitled"));
-  const author = element(document, "p", "book-author");
+  const author = element(document, "p", "opacity-60");
   append(author, text(document, primitiveText(book?.author)));
-  append(content, title, author, field(document, "Status", book?.status), field(document, "Rating", book?.rating));
-  if (book?.seriesName) append(content, field(document, "Series", book.seriesName));
-  const open = actionButton(document, "Open", "open", () => options.onOpen?.(book));
+  append(
+    content,
+    title,
+    author,
+    field(document, "Status", book?.status),
+    field(document, "Rating", book?.rating),
+  );
+  if (book?.seriesName)
+    append(content, field(document, "Series", book.seriesName));
+  const open = actionButton(document, "Open", "open", () =>
+    options.onOpen?.(book),
+  );
   append(content, open);
   append(card, content);
   return card;
 }
 
 export function renderLibrary(document, books, options = {}) {
-  const list = element(document, "section", "library-list");
+  const list = element(document, "section", "grid gap-3");
   let count = 0;
   for (const book of Array.isArray(books) ? books : []) {
     append(list, renderBookSummary(document, book, options));
     count += 1;
   }
   if (count === 0) {
-    const empty = element(document, "p", "empty-state");
+    const empty = element(document, "p", "py-8 text-center opacity-60");
     append(empty, text(document, "No books found."));
     append(list, empty);
   }
@@ -268,39 +366,89 @@ export function renderLibrary(document, books, options = {}) {
 }
 
 export function renderConversationList(document, conversations, options = {}) {
-  const list = element(document, "nav", "conversation-list");
+  const list = element(document, "nav", "menu menu-sm w-full gap-1 p-0");
   attribute(list, "aria-label", "Conversations");
-  for (const conversation of Array.isArray(conversations) ? conversations : []) {
-    const row = element(document, "div", `conversation-row${conversation?.id === options.activeId ? " active" : ""}`);
-    const button = actionButton(document, primitiveText(conversation?.name) || "Unnamed conversation", "open", () => options.onOpen?.(conversation));
+  for (const conversation of Array.isArray(conversations)
+    ? conversations
+    : []) {
+    const row = element(
+      document,
+      "div",
+      "grid grid-cols-[minmax(0,1fr)_auto] gap-1",
+    );
+    const button = actionButton(
+      document,
+      primitiveText(conversation?.name) || "Unnamed conversation",
+      "open",
+      () => options.onOpen?.(conversation),
+    );
+    button.className += ` min-w-0 justify-start truncate${conversation?.id === options.activeId ? " btn-active" : ""}`;
     attribute(button, "data-conversation-id", conversation?.id ?? "");
-    append(row, button);
-    const rename = actionButton(document, "Rename", "rename", () => options.onRename?.(conversation));
-    const archive = actionButton(document, conversation?.archived ? "Restore" : "Archive", "archive", () => options.onArchive?.(conversation));
-    const remove = actionButton(document, "Delete", "delete", () => options.onDelete?.(conversation));
+
+    const dropdown = element(document, "details", "dropdown dropdown-end");
+    const trigger = element(document, "summary", "btn btn-ghost btn-sm");
+    append(trigger, text(document, "Actions"));
+    const actions = element(
+      document,
+      "ul",
+      "menu dropdown-content right-0 z-10 w-32 rounded-box bg-base-100 p-2 shadow",
+    );
+    const rename = actionButton(document, "Rename", "rename", () =>
+      options.onRename?.(conversation),
+    );
+    const archive = actionButton(
+      document,
+      conversation?.archived ? "Restore" : "Archive",
+      "archive",
+      () => options.onArchive?.(conversation),
+    );
+    const remove = actionButton(document, "Delete", "delete", () =>
+      options.onDelete?.(conversation),
+    );
+    for (const control of [rename, archive, remove]) {
+      const item = element(document, "li");
+      append(item, control);
+      append(actions, item);
+    }
+    append(dropdown, trigger, actions);
     if (options.disabled === true) {
       for (const control of [button, rename, archive, remove]) {
         control.disabled = true;
         attribute(control, "disabled", "");
       }
+      trigger.className += " pointer-events-none opacity-50";
+      attribute(trigger, "aria-disabled", "true");
     }
-    append(row, rename, archive, remove);
+    append(row, button, dropdown);
     append(list, row);
   }
   return list;
 }
 
 export function renderProposal(document, proposal, options = {}) {
-  const card = element(document, "article", "proposal-card");
+  const card = element(document, "article", "card bg-base-200 p-4");
   attribute(card, "data-proposal-id", proposal?.proposalId ?? "");
-  const heading = element(document, "h3");
+  const heading = element(document, "h3", "card-title");
   append(heading, text(document, "Proposed change"));
-  append(card, heading, field(document, "Kind", proposal?.kind), field(document, "Value", proposal?.value), field(document, "Explanation", proposal?.explanation));
-  const actions = element(document, "div", "proposal-actions");
-  append(actions,
-    actionButton(document, "Accept", "accept", () => options.onAccept?.(proposal)),
-    actionButton(document, "Edit and accept", "edit", () => options.onEdit?.(proposal)),
-    actionButton(document, "Reject", "reject", () => options.onReject?.(proposal)),
+  append(
+    card,
+    heading,
+    field(document, "Kind", proposal?.kind),
+    field(document, "Value", proposal?.value),
+    field(document, "Explanation", proposal?.explanation),
+  );
+  const actions = element(document, "div", "card-actions mt-3 flex-wrap");
+  append(
+    actions,
+    actionButton(document, "Accept", "accept", () =>
+      options.onAccept?.(proposal),
+    ),
+    actionButton(document, "Edit and accept", "edit", () =>
+      options.onEdit?.(proposal),
+    ),
+    actionButton(document, "Reject", "reject", () =>
+      options.onReject?.(proposal),
+    ),
   );
   append(card, actions);
   return card;
@@ -311,13 +459,14 @@ export const renderCoverImage = renderCover;
 export const renderChatMessage = renderMessage;
 
 export function renderBookDetails(document, book, options = {}) {
-  const panel = element(document, "section", "book-details");
-  const heading = element(document, "h2");
+  const panel = element(document, "section", "card bg-base-200 p-4");
+  const heading = element(document, "h2", "card-title");
   append(heading, text(document, primitiveText(book?.title) || "Book"));
   append(panel, heading);
   const cover = renderCover(document, book?.coverUrl, book?.title);
   if (cover) append(panel, cover);
-  append(panel,
+  append(
+    panel,
     field(document, "Author", book?.author),
     field(document, "Publication year", book?.publicationYear),
     field(document, "Series", book?.seriesName),
@@ -325,21 +474,36 @@ export function renderBookDetails(document, book, options = {}) {
     field(document, "Status", book?.status),
     field(document, "Rating", book?.rating),
   );
-  const edit = actionButton(document, "Edit book", "edit", () => options.onEdit?.(book));
+  const edit = actionButton(document, "Edit book", "edit", () =>
+    options.onEdit?.(book),
+  );
   append(panel, edit);
 
   if (Array.isArray(book?.notes) && book.notes.length) {
-    const notes = element(document, "section", "book-notes");
+    const notes = element(
+      document,
+      "section",
+      "mt-4 border-t border-base-300 pt-4",
+    );
     const title = element(document, "h3");
     append(title, text(document, "Notes"));
     append(notes, title);
     for (const note of book.notes) {
-      const item = element(document, "article", "book-note");
+      const item = element(
+        document,
+        "article",
+        "border-b border-base-300 py-3 whitespace-pre-wrap break-words",
+      );
       append(item, text(document, primitiveText(note?.note)));
-      const controls = element(document, "div", "note-actions");
-      append(controls,
-        actionButton(document, "Edit", "edit-note", () => options.onEditNote?.(note)),
-        actionButton(document, "Delete", "delete-note", () => options.onDeleteNote?.(note)),
+      const controls = element(document, "div", "mt-2 flex flex-wrap gap-1");
+      append(
+        controls,
+        actionButton(document, "Edit", "edit-note", () =>
+          options.onEditNote?.(note),
+        ),
+        actionButton(document, "Delete", "delete-note", () =>
+          options.onDeleteNote?.(note),
+        ),
       );
       append(item, controls);
       append(notes, item);

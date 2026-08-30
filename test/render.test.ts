@@ -108,27 +108,36 @@ interface Renderers {
     activeContext: unknown,
     conversationId: number,
   ): boolean;
-  markStreamTerminal(context: { terminal: boolean }, event: { type: string }): boolean;
+  markStreamTerminal(
+    context: { terminal: boolean },
+    event: { type: string },
+  ): boolean;
   streamNeedsIncomplete(context: { terminal: boolean }): boolean;
 }
 
-async function get(port: number, path: string): Promise<{
+async function get(
+  port: number,
+  path: string,
+): Promise<{
   status: number;
   contentType: string | undefined;
   body: string;
 }> {
   return new Promise((resolve, reject) => {
-    const request = httpRequest({ host: "127.0.0.1", port, path }, (response) => {
-      const chunks: Buffer[] = [];
-      response.on("data", (chunk: Buffer) => chunks.push(chunk));
-      response.on("end", () =>
-        resolve({
-          status: response.statusCode ?? 0,
-          contentType: response.headers["content-type"],
-          body: Buffer.concat(chunks).toString("utf8"),
-        }),
-      );
-    });
+    const request = httpRequest(
+      { host: "127.0.0.1", port, path },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            contentType: response.headers["content-type"],
+            body: Buffer.concat(chunks).toString("utf8"),
+          }),
+        );
+      },
+    );
     request.on("error", reject);
     request.end();
   });
@@ -136,7 +145,7 @@ async function get(port: number, path: string): Promise<{
 
 const renderer = (async (): Promise<Renderers> => {
   const module = (await import(
-    new URL("../../public/render.js", import.meta.url).href,
+    new URL("../../public/render.js", import.meta.url).href
   )) as unknown as Renderers;
   return module;
 })();
@@ -146,7 +155,11 @@ test("static shell serves fixed assets with JSON CSRF data", async () => {
     library: { searchBooks: () => ({}) },
     registry: { list: () => [] },
     openLibrary: { lookup: () => ({}) },
-    turns: { submit: async () => undefined, cancel: () => false },
+    turns: {
+      submit: async () => undefined,
+      steer: () => false,
+      cancel: () => false,
+    },
   } as never);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -166,6 +179,10 @@ test("static shell serves fixed assets with JSON CSRF data", async () => {
     const css = await get(address.port, "/styles.css");
     assert.equal(css.status, 200);
     assert.equal(css.contentType, "text/css; charset=utf-8");
+    assert.match(shell.body, /class="[^"]*btn btn-primary/);
+    assert.match(shell.body, /<dialog\s+id="drawer"/);
+    assert.match(shell.body, /id="open-drawer"/);
+    assert.match(css.body, /\.btn\{/);
     const script = await get(address.port, "/app.js");
     assert.equal(script.status, 200);
     assert.equal(script.contentType, "text/javascript; charset=utf-8");
@@ -185,14 +202,18 @@ test("static assets resolve relative to the module instead of the working direct
   let server: ReturnType<typeof createHttpServer> | undefined;
   try {
     process.chdir(emptyCwd);
-    const module = await import(
-      new URL(`../src/http.js?static=${Date.now()}`, import.meta.url).href,
-    ) as typeof import("../src/http.js");
+    const module = (await import(
+      new URL(`../src/http.js?static=${Date.now()}`, import.meta.url).href
+    )) as typeof import("../src/http.js");
     server = module.createHttpServer({
       library: { searchBooks: () => ({}) },
       registry: { list: () => [] },
       openLibrary: { lookup: () => ({}) },
-      turns: { submit: async () => undefined, cancel: () => false },
+      turns: {
+        submit: async () => undefined,
+        steer: () => false,
+        cancel: () => false,
+      },
     } as never);
     await new Promise<void>((resolve, reject) => {
       server!.once("error", reject);
@@ -205,7 +226,8 @@ test("static assets resolve relative to the module instead of the working direct
     assert.ok(address && typeof address === "object");
     assert.equal((await get(address.port, "/")).status, 200);
   } finally {
-    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    if (server)
+      await new Promise<void>((resolve) => server!.close(() => resolve()));
     process.chdir(originalCwd);
     rmSync(emptyCwd, { recursive: true, force: true });
   }
@@ -219,7 +241,10 @@ test("renderMessage keeps malicious HTML as text", async () => {
   });
 
   assert.match(node.textContent, /<img src=x/);
-  assert.equal(node.children.some((child) => child.tagName === "IMG"), false);
+  assert.equal(
+    node.children.some((child) => child.tagName === "IMG"),
+    false,
+  );
 });
 
 test("renderCitation omits unsafe and malformed URLs", async () => {
@@ -253,7 +278,11 @@ test("renderCover rejects unsafe schemes and sets referrer policy", async () => 
   const document = new FakeDocument();
 
   assert.equal(renderCover(document, "data:image/svg+xml,<svg></svg>"), null);
-  const image = renderCover(document, "http://covers.example.test/book.jpg", "Book");
+  const image = renderCover(
+    document,
+    "http://covers.example.test/book.jpg",
+    "Book",
+  );
   assert.ok(image);
   assert.equal(image.src, "http://covers.example.test/book.jpg");
   assert.equal(image.referrerPolicy, "no-referrer");

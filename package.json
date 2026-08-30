@@ -8,10 +8,13 @@
     "pi-web-access": "0.24.2"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "daisyui": "^5.7.22",
+    "tailwindcss": "^4.3.3",
     "typescript": "7.0.2"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tailwindcss -i ./styles.css -o ./public/styles.css --minify && tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
     "start": "npm run build && node dist/src/main.js"
   }
