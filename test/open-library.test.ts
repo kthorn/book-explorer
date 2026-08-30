@@ -710,10 +710,7 @@ test("Open Library timeout, malformed, and not-found errors do not prevent manua
       return json(response, 404, {});
     });
     await withDatabase(async (db) => {
-      const client = new OpenLibraryClient(db, {
-        baseUrl: fixture.baseUrl,
-        timeoutMs: 20,
-      });
+      const client = new OpenLibraryClient(db, { baseUrl: fixture.baseUrl });
       await assert.rejects(
         () => client.lookup({ workId: "OL999W" }),
         (error: unknown) => {
@@ -736,8 +733,12 @@ test("Open Library timeout, malformed, and not-found errors do not prevent manua
           );
         },
       );
+      const timeoutClient = new OpenLibraryClient(db, {
+        baseUrl: fixture.baseUrl,
+        timeoutMs: 20,
+      });
       await assert.rejects(
-        () => client.lookup({ workId: "OL1W" }),
+        () => timeoutClient.lookup({ workId: "OL1W" }),
         (error: unknown) => {
           return (
             typeof error === "object" &&
