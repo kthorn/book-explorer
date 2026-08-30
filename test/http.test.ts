@@ -259,16 +259,16 @@ function parsedSse(raw: string): BrowserStreamEvent[] {
     .split("\n\n")
     .filter(Boolean)
     .map((block) => {
-      const data = block
-        .split("\n")
-        .find((line) => line.startsWith("data: "));
+      const data = block.split("\n").find((line) => line.startsWith("data: "));
       assert.ok(data);
       // SAFETY: the HTTP route emits only serialized BrowserStreamEvent values.
       return JSON.parse(data.slice("data: ".length)) as BrowserStreamEvent;
     });
 }
 
-function assertNoCors(headers: Record<string, string | string[] | undefined>): void {
+function assertNoCors(
+  headers: Record<string, string | string[] | undefined>,
+): void {
   for (const name of Object.keys(headers)) {
     assert.equal(name.toLowerCase().startsWith("access-control-"), false);
   }
@@ -291,12 +291,18 @@ test("HTTP route contract covers conversations, books, series, notes, and recomm
       note: "Note",
     });
     assert.equal(createdSeries.status, 201);
-    assert.deepEqual(createdSeries.body, item.library.getSeries((createdSeries.body as { id: number }).id));
+    assert.deepEqual(
+      createdSeries.body,
+      item.library.getSeries((createdSeries.body as { id: number }).id),
+    );
     assertNoCors(createdSeries.headers);
     const seriesId = (createdSeries.body as { id: number }).id;
     const seriesPage = await call(item, "GET", "/api/series?limit=20&offset=0");
     assert.equal(seriesPage.status, 200);
-    assert.deepEqual(seriesPage.body, item.library.searchSeries({ limit: 20, offset: 0 }));
+    assert.deepEqual(
+      seriesPage.body,
+      item.library.searchSeries({ limit: 20, offset: 0 }),
+    );
     assertNoCors(seriesPage.headers);
     const updatedSeries = await call(item, "PATCH", `/api/series/${seriesId}`, {
       name: "New Saga",
@@ -319,7 +325,10 @@ test("HTTP route contract covers conversations, books, series, notes, and recomm
     assertNoCors(createdBook.headers);
     const booksPage = await call(item, "GET", "/api/books");
     assert.equal(booksPage.status, 200);
-    assert.deepEqual(booksPage.body, item.library.searchBooks({ limit: 20, offset: 0 }));
+    assert.deepEqual(
+      booksPage.body,
+      item.library.searchBooks({ limit: 20, offset: 0 }),
+    );
     assertNoCors(booksPage.headers);
     const fetchedBook = await call(item, "GET", `/api/books/${bookId}`);
     assert.equal(fetchedBook.status, 200);
@@ -332,11 +341,16 @@ test("HTTP route contract covers conversations, books, series, notes, and recomm
     assert.equal(updatedBook.status, 200);
     assert.deepEqual(updatedBook.body, item.library.getBook(bookId));
     assertNoCors(updatedBook.headers);
-    const replacedIdentifiers = await call(item, "PATCH", `/api/books/${bookId}`, {
-      identifiers: [
-        { scheme: "isbn13", value: "978-0-306-40615-7", source: "edited" },
-      ],
-    });
+    const replacedIdentifiers = await call(
+      item,
+      "PATCH",
+      `/api/books/${bookId}`,
+      {
+        identifiers: [
+          { scheme: "isbn13", value: "978-0-306-40615-7", source: "edited" },
+        ],
+      },
+    );
     assert.equal(replacedIdentifiers.status, 200);
     assert.deepEqual(
       (replacedIdentifiers.body as { identifiers: unknown[] }).identifiers,
@@ -347,9 +361,14 @@ test("HTTP route contract covers conversations, books, series, notes, and recomm
         .identifiers[0]?.value,
       "9780306406157",
     );
-    const removedIdentifiers = await call(item, "PATCH", `/api/books/${bookId}`, {
-      identifiers: [],
-    });
+    const removedIdentifiers = await call(
+      item,
+      "PATCH",
+      `/api/books/${bookId}`,
+      {
+        identifiers: [],
+      },
+    );
     assert.equal(removedIdentifiers.status, 200);
     assert.deepEqual(
       (removedIdentifiers.body as { identifiers: unknown[] }).identifiers,
@@ -357,20 +376,36 @@ test("HTTP route contract covers conversations, books, series, notes, and recomm
     );
 
     const note = item.library.addNote(bookId, "Old note");
-    const updatedNote = await call(item, "PATCH", `/api/books/${bookId}/notes/${note.id}`, {
-      note: "New note",
-    });
+    const updatedNote = await call(
+      item,
+      "PATCH",
+      `/api/books/${bookId}/notes/${note.id}`,
+      {
+        note: "New note",
+      },
+    );
     assert.equal(updatedNote.status, 200);
     assert.deepEqual(updatedNote.body, item.library.getNote(note.id));
     assertNoCors(updatedNote.headers);
-    const deletedNote = await call(item, "DELETE", `/api/books/${bookId}/notes/${note.id}`);
+    const deletedNote = await call(
+      item,
+      "DELETE",
+      `/api/books/${bookId}/notes/${note.id}`,
+    );
     assert.equal(deletedNote.status, 204);
     assert.equal(deletedNote.body, undefined);
     assertNoCors(deletedNote.headers);
     item.library.recordRecommendation("request-http", bookId, "Rationale");
-    const recommendationPage = await call(item, "GET", `/api/books/${bookId}/recommendations`);
+    const recommendationPage = await call(
+      item,
+      "GET",
+      `/api/books/${bookId}/recommendations`,
+    );
     assert.equal(recommendationPage.status, 200);
-    assert.deepEqual(recommendationPage.body, item.library.listRecommendations(bookId, { limit: 20, offset: 0 }));
+    assert.deepEqual(
+      recommendationPage.body,
+      item.library.listRecommendations(bookId, { limit: 20, offset: 0 }),
+    );
     assertNoCors(recommendationPage.headers);
 
     const createdConversation = await call(item, "POST", "/api/conversations", {
@@ -378,7 +413,10 @@ test("HTTP route contract covers conversations, books, series, notes, and recomm
     });
     assert.equal(createdConversation.status, 201);
     const conversationId = (createdConversation.body as { id: number }).id;
-    assert.deepEqual(createdConversation.body, item.registry.get(conversationId));
+    assert.deepEqual(
+      createdConversation.body,
+      item.registry.get(conversationId),
+    );
     assertNoCors(createdConversation.headers);
     const conversationsPage = await call(item, "GET", "/api/conversations");
     assert.equal(conversationsPage.status, 200);
@@ -400,11 +438,19 @@ test("HTTP route contract covers conversations, books, series, notes, and recomm
       transcript: [],
     });
     assertNoCors(conversation.headers);
-    const renamedConversation = await call(item, "PATCH", `/api/conversations/${conversationId}`, {
-      name: "Renamed",
-    });
+    const renamedConversation = await call(
+      item,
+      "PATCH",
+      `/api/conversations/${conversationId}`,
+      {
+        name: "Renamed",
+      },
+    );
     assert.equal(renamedConversation.status, 200);
-    assert.deepEqual(renamedConversation.body, item.registry.get(conversationId));
+    assert.deepEqual(
+      renamedConversation.body,
+      item.registry.get(conversationId),
+    );
     assertNoCors(renamedConversation.headers);
     const archivedConversation = await call(
       item,
@@ -413,9 +459,16 @@ test("HTTP route contract covers conversations, books, series, notes, and recomm
       { archived: true },
     );
     assert.equal(archivedConversation.status, 200);
-    assert.deepEqual(archivedConversation.body, item.registry.get(conversationId));
+    assert.deepEqual(
+      archivedConversation.body,
+      item.registry.get(conversationId),
+    );
     assertNoCors(archivedConversation.headers);
-    const deletedConversation = await call(item, "DELETE", `/api/conversations/${conversationId}`);
+    const deletedConversation = await call(
+      item,
+      "DELETE",
+      `/api/conversations/${conversationId}`,
+    );
     assert.equal(deletedConversation.status, 204);
     assert.equal(deletedConversation.body, undefined);
     assertNoCors(deletedConversation.headers);
@@ -711,8 +764,9 @@ test("HTTP transcript marks persisted assistant stop reasons as incomplete", asy
     );
     assert.equal(response.status, 200);
     assert.deepEqual(
-      (response.body as { transcript: Array<{ incomplete?: boolean }> })
-        .transcript.map((entry) => entry.incomplete === true),
+      (
+        response.body as { transcript: Array<{ incomplete?: boolean }> }
+      ).transcript.map((entry) => entry.incomplete === true),
       [true, true, true, false],
     );
   } finally {
@@ -746,7 +800,8 @@ test("HTTP sanitizes raw turn error messages before sending SSE", async () => {
       {
         type: "error",
         code: "authentication_error",
-        message: "request failed Authorization: Bearer [redacted] apiKey=[redacted] token: [redacted]",
+        message:
+          "request failed Authorization: Bearer [redacted] apiKey=[redacted] token: [redacted]",
         retryable: false,
         incomplete: true,
       },
@@ -827,7 +882,10 @@ test("HTTP route errors are uniform and duplicate candidates stay in safe detail
       };
     };
     assert.equal(ambiguousError.error.code, "ambiguous_book");
-    assert.equal(ambiguousError.error.message, "More than one book matches the supplied identity");
+    assert.equal(
+      ambiguousError.error.message,
+      "More than one book matches the supplied identity",
+    );
     assert.equal(ambiguousError.error.retryable, false);
     assert.equal(Array.isArray(ambiguousError.error.details.candidates), true);
     assertNoCors(ambiguous.headers);
@@ -952,7 +1010,10 @@ test("HTTP awaits SSE drain before the turn can continue", async () => {
   let forceBackpressure = true;
   let pending: Promise<Awaited<ReturnType<typeof call>>> | undefined;
   // SAFETY: this test replaces the concrete Node response writer only for one request.
-  ServerResponse.prototype.write = function (this: ServerResponse, chunk: string | Uint8Array): boolean {
+  ServerResponse.prototype.write = function (
+    this: ServerResponse,
+    chunk: string | Uint8Array,
+  ): boolean {
     const result = originalWrite.call(this, chunk, "utf8", undefined);
     if (forceBackpressure) {
       forceBackpressure = false;
@@ -962,7 +1023,12 @@ test("HTTP awaits SSE drain before the turn can continue", async () => {
     return result;
   } as typeof originalWrite;
   try {
-    pending = call(item, "POST", `/api/conversations/${item.conversationId}/messages`, { text: "drain" });
+    pending = call(
+      item,
+      "POST",
+      `/api/conversations/${item.conversationId}/messages`,
+      { text: "drain" },
+    );
     await waitUntil(() => forcedResponse !== undefined);
     assert.equal(item.turns.firstEventReturned, false);
     const responseForDrain = forcedResponse;
@@ -971,7 +1037,10 @@ test("HTTP awaits SSE drain before the turn can continue", async () => {
     const response = await pending;
     assert.equal(response.status, 200);
     assert.equal(item.turns.firstEventReturned, true);
-    assert.deepEqual(parsedSse(response.raw).at(-1), { type: "complete", incomplete: false });
+    assert.deepEqual(parsedSse(response.raw).at(-1), {
+      type: "complete",
+      incomplete: false,
+    });
   } finally {
     forcedResponse?.emit("drain");
     await pending?.catch(() => undefined);

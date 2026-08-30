@@ -14,11 +14,7 @@ import {
   type Conversation,
   type ConversationRegistry,
 } from "./conversations.js";
-import type {
-  Book,
-  LibraryRepository,
-  Recommendation,
-} from "./library.js";
+import type { Book, LibraryRepository, Recommendation } from "./library.js";
 import type { ProposalRegistry, ProposalSession } from "./proposals.js";
 import {
   createCitationCapture,
@@ -495,12 +491,14 @@ export class TurnCoordinator {
           try {
             if (
               input.retryRequestId !== undefined &&
-              !manager.getEntries().some(
-                (entry) =>
-                  entry.type === "custom" &&
-                  entry.customType === "book-explorer-request" &&
-                  record(entry.data)?.requestId === input.retryRequestId,
-              )
+              !manager
+                .getEntries()
+                .some(
+                  (entry) =>
+                    entry.type === "custom" &&
+                    entry.customType === "book-explorer-request" &&
+                    record(entry.data)?.requestId === input.retryRequestId,
+                )
             ) {
               throw new InvalidRetryRequestError();
             }
@@ -706,13 +704,12 @@ export class TurnCoordinator {
         active.toolFailure = failureFromToolResult(event.result);
       } else if (event.toolName === "record_recommendation") {
         const recommendation = recommendationFromToolResult(event.result);
-        const book = recommendation && this.library.getBook(recommendation.bookId);
+        const book =
+          recommendation && this.library.getBook(recommendation.bookId);
         if (
           recommendation &&
           book &&
-          !active.recommendations?.some(
-            (item) => item.id === recommendation.id,
-          )
+          !active.recommendations?.some((item) => item.id === recommendation.id)
         ) {
           (active.recommendations ??= []).push({ ...recommendation, book });
         }

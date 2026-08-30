@@ -751,7 +751,7 @@ function expectedHost(server: Server, configured?: string): string {
   const socketHost = addressHost(server);
   const host =
     configured === undefined
-      ? socketHost ?? "127.0.0.1"
+      ? (socketHost ?? "127.0.0.1")
       : socketHost && configured === "127.0.0.1"
         ? socketHost
         : configured;
@@ -886,7 +886,10 @@ function safeStreamMessage(error: unknown, fallback: string): string {
 
 function safeStreamEvent(event: BrowserStreamEvent): BrowserStreamEvent {
   if (event.type !== "error") return event;
-  return { ...event, message: safeStreamMessage(event.message, "Model turn failed") };
+  return {
+    ...event,
+    message: safeStreamMessage(event.message, "Model turn failed"),
+  };
 }
 
 function classifyStreamError(

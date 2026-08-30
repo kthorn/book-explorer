@@ -452,14 +452,20 @@ test("library-only mode reports a stable restart-required stream error", async (
     };
     unavailableRuntime.model = undefined;
     unavailableRuntime.libraryOnlyReason = "offline";
-    const service = coordinator(item, driver, ["unused"], unavailableRuntime as never);
+    const service = coordinator(
+      item,
+      driver,
+      ["unused"],
+      unavailableRuntime as never,
+    );
     const events = await collectSubmit(service, item.conversations[0]);
 
     assert.deepEqual(events, [
       {
         type: "error",
         code: "model_unavailable",
-        message: "Model is unavailable. Restart Book Explorer after model access is restored.",
+        message:
+          "Model is unavailable. Restart Book Explorer after model access is restored.",
         retryable: false,
         incomplete: false,
       },
@@ -485,13 +491,17 @@ test("turn completes with request-scoped recommendations without adding stream e
         undefined,
         {} as never,
       );
-    const book = (bookResult.details as { ok: true; data: { id: number } }).data;
+    const book = (bookResult.details as { ok: true; data: { id: number } })
+      .data;
     bookId = book.id;
     const recommendationResult = await tools
       .find((tool) => tool.name === "record_recommendation")!
       .execute(
         "recommendation-call",
-        { bookId: book.id, rationale: "A request-scoped recommendation." } as never,
+        {
+          bookId: book.id,
+          rationale: "A request-scoped recommendation.",
+        } as never,
         undefined,
         undefined,
         {} as never,
@@ -509,10 +519,10 @@ test("turn completes with request-scoped recommendations without adding stream e
     const service = coordinator(item, driver, ["request-recommendation"]);
     const events = await collectSubmit(service, item.conversations[0]);
 
-    assert.deepEqual(events.map((event) => event.type), [
-      "tool_status",
-      "complete",
-    ]);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ["tool_status", "complete"],
+    );
     const complete = events.at(-1);
     assert.equal(complete?.type, "complete");
     if (complete?.type === "complete") {
@@ -525,7 +535,10 @@ test("turn completes with request-scoped recommendations without adding stream e
         }
       ).recommendations;
       assert.equal(recommendations?.length, 1);
-      assert.equal(recommendations?.[0]?.rationale, "A request-scoped recommendation.");
+      assert.equal(
+        recommendations?.[0]?.rationale,
+        "A request-scoped recommendation.",
+      );
       assert.equal(recommendations?.[0]?.book.id, bookId);
       assert.equal(recommendations?.[0]?.book.title, "Inline Book");
     }

@@ -58,8 +58,9 @@ test("streaming submissions preserve steering chronology without dropping messag
   const document = new FakeDocument();
   document.getElementById("csrf-token").textContent = JSON.stringify("csrf");
   const calls: Array<{ path: string; options?: RequestInit }> = [];
-  const pendingSteers: Array<(response: ReturnType<typeof jsonResponse>) => void> =
-    [];
+  const pendingSteers: Array<
+    (response: ReturnType<typeof jsonResponse>) => void
+  > = [];
   const stream = new StreamReader();
   const originalDocument = globalThis.document;
   const originalWindow = globalThis.window;
@@ -103,9 +104,7 @@ test("streaming submissions preserve steering chronology without dropping messag
   try {
     await import(new URL("../../public/app.js", import.meta.url).href);
     while (
-      !calls.some(
-        ({ path }) => path === "/api/conversations/1/proposals",
-      )
+      !calls.some(({ path }) => path === "/api/conversations/1/proposals")
     ) {
       await nextTurn();
     }
