@@ -216,6 +216,22 @@ test('recursively removes nested orphan session files', () => {
   }
 });
 
+test('preserves a referenced session through a symlink-configured sessions root', () => {
+  const item = fixture();
+  try {
+    const conversation = item.registry.create('Symlink root');
+    const configuredRoot = join(item.root, 'sessions-link');
+    item.registry.close();
+    symlinkSync(item.sessions, configuredRoot);
+    const reopened = new ConversationRegistry(item.db, { cwd: item.root, sessionDir: configuredRoot });
+    assert.equal(existsSync(join(item.sessions, conversation.sessionFilename)), true);
+    assert.equal(reopened.get(conversation.id)?.id, conversation.id);
+    reopened.close();
+  } finally {
+    dispose(item);
+  }
+});
+
 test('fails startup for a missing or corrupt referenced file', () => {
   const missing = fixture();
   try {

@@ -521,7 +521,8 @@ export class ConversationRegistry {
       const filename = row.session_filename;
       if (typeof filename !== 'string') throw new ConversationDataRecoveryError(`conversation ${String(row.id)} has no session filename`);
       const path = this.referencePath(filename);
-      referenced.set(normalizedRelativePath(relative(this.sessionDir, path)), path);
+      const canonicalPath = this.canonicalPath(path);
+      referenced.set(normalizedRelativePath(relative(this.realSessionDir, canonicalPath)), path);
     }
 
     for (const path of referenced.values()) {
@@ -543,14 +544,22 @@ export class ConversationRegistry {
         if (readdirSync(path).length === 0) rmdirSync(path);
         continue;
       }
-      const relativeName = normalizedRelativePath(relative(this.sessionDir, path));
+      const relativeName = normalizedRelativePath(relative(this.realSessionDir, this.canonicalPath(path)));
       if (referenced.has(relativeName)) continue;
       if (entry.name.endsWith('.deleting')) {
         const originalName = entry.name.slice(0, -'.deleting'.length);
         const originalPath = join(directory, originalName);
-        if (referenced.has(normalizedRelativePath(relative(this.sessionDir, originalPath)))) continue;
+        if (referenced.has(normalizedRelativePath(relative(this.realSessionDir, this.canonicalPath(originalPath))))) continue;
       }
       unlinkSync(path);
+    }
+  }
+
+  private canonicalPath(path: string): string {
+    try {
+      return this.realPath(path, 'session artifact');
+    } catch {
+      return resolve(this.realSessionDir, relative(this.sessionDir, path));
     }
   }
 
