@@ -55,6 +55,37 @@ export function safeHttpUrl(value) {
   }
 }
 
+export function createStreamContext(conversationId) {
+  return {
+    token: Symbol("book-explorer-stream"),
+    conversationId,
+    assistantText: "",
+    assistantNode: null,
+    citationNode: null,
+    citations: [],
+    terminal: false,
+  };
+}
+
+export function isCurrentStream(context, activeContext, conversationId) {
+  return Boolean(
+    context &&
+      activeContext &&
+      context === activeContext &&
+      context.token === activeContext.token &&
+      context.conversationId === conversationId,
+  );
+}
+
+export function markStreamTerminal(context, event) {
+  if (event?.type === "complete" || event?.type === "error") context.terminal = true;
+  return context.terminal;
+}
+
+export function streamNeedsIncomplete(context) {
+  return context.terminal !== true;
+}
+
 export function renderMessage(document, message, options = {}) {
   const role = message?.role === "user" ? "user" : "assistant";
   const incomplete = message?.incomplete === true || options.incomplete === true;
@@ -233,6 +264,12 @@ export function renderConversationList(document, conversations, options = {}) {
     const rename = actionButton(document, "Rename", "rename", () => options.onRename?.(conversation));
     const archive = actionButton(document, conversation?.archived ? "Restore" : "Archive", "archive", () => options.onArchive?.(conversation));
     const remove = actionButton(document, "Delete", "delete", () => options.onDelete?.(conversation));
+    if (options.disabled === true) {
+      for (const control of [button, rename, archive, remove]) {
+        control.disabled = true;
+        attribute(control, "disabled", "");
+      }
+    }
     append(row, rename, archive, remove);
     append(list, row);
   }

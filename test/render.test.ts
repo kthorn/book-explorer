@@ -90,6 +90,18 @@ interface Renderers {
     content: unknown,
     incomplete?: boolean,
   ): FakeNodeLike;
+  createStreamContext(conversationId: number): {
+    conversationId: number;
+    assistantText: string;
+    terminal: boolean;
+  };
+  isCurrentStream(
+    context: unknown,
+    activeContext: unknown,
+    conversationId: number,
+  ): boolean;
+  markStreamTerminal(context: { terminal: boolean }, event: { type: string }): boolean;
+  streamNeedsIncomplete(context: { terminal: boolean }): boolean;
 }
 
 async function get(port: number, path: string): Promise<{
@@ -214,4 +226,37 @@ test("incomplete assistant output is marked", async () => {
   assert.match(node.className ?? "", /incomplete/);
   assert.match(node.textContent, /partial/);
   assert.match(node.textContent, /incomplete/i);
+});
+
+test("stale stream contexts are ignored after conversation switching", async () => {
+  const { createStreamContext, isCurrentStream } = await renderer;
+  const first = createStreamContext(1);
+  const second = createStreamContext(2);
+
+  assert.equal(isCurrentStream(first, first, 1), true);
+  assert.equal(isCurrentStream(first, second, 2), false);
+  assert.equal(isCurrentStream(first, first, 2), false);
+});
+
+test("stream terminal tracking distinguishes complete/error from abnormal EOF", async () => {
+  const {
+    createStreamContext,
+    markStreamTerminal,
+    streamNeedsIncomplete,
+    renderAssistantMessage,
+  } = await renderer;
+  const document = new FakeDocument();
+  const partial = createStreamContext(1);
+  const partialNode = renderAssistantMessage(
+    document,
+    "partial",
+    streamNeedsIncomplete(partial),
+  );
+  assert.match(partialNode.className ?? "", /incomplete/);
+
+  assert.equal(markStreamTerminal(partial, { type: "complete" }), true);
+  assert.equal(streamNeedsIncomplete(partial), false);
+  const failed = createStreamContext(1);
+  assert.equal(markStreamTerminal(failed, { type: "error" }), true);
+  assert.equal(streamNeedsIncomplete(failed), false);
 });

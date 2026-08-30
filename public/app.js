@@ -1,4 +1,7 @@
 import {
+  createStreamContext,
+  isCurrentStream,
+  markStreamTerminal,
   renderAssistantMessage,
   renderBookDetails,
   renderCitation,
@@ -7,6 +10,7 @@ import {
   renderMessage,
   renderProposal,
   renderRecommendationCard,
+  streamNeedsIncomplete,
 } from "./render.js";
 
 const csrfElement = document.getElementById("csrf-token");
@@ -23,10 +27,7 @@ const state = {
   conversation: null,
   books: [],
   series: [],
-  assistantText: "",
-  assistantNode: null,
-  citationNode: null,
-  citations: [],
+  activeStream: null,
   streaming: false,
 };
 
@@ -187,12 +188,20 @@ function showView(view) {
   setText(viewTitle, view === "library" ? "Library" : state.conversation?.name || "Conversation");
 }
 
+function setNavigationDisabled(disabled) {
+  for (const id of ["new-conversation", "library-link"]) {
+    const button = byId(id);
+    if (button) button.disabled = disabled;
+  }
+}
+
 function renderSidebar() {
   const target = byId("conversation-list");
   if (!target) return;
   clear(target);
   append(target, renderConversationList(document, state.conversations, {
     activeId: state.conversation?.id,
+    disabled: state.streaming,
     onOpen: (conversation) => selectConversation(conversation.id),
     onRename: (conversation) => renameConversation(conversation),
     onArchive: (conversation) => archiveConversation(conversation),
@@ -220,6 +229,7 @@ async function loadConversations(selectFirst = true) {
 }
 
 async function createConversation() {
+  if (state.streaming) return;
   const name = window.prompt("Conversation name", "New conversation");
   if (!name?.trim()) return;
   try {
@@ -236,6 +246,7 @@ async function createConversation() {
 }
 
 async function renameConversation(conversation) {
+  if (state.streaming) return;
   const name = window.prompt("Conversation name", conversation.name);
   if (!name?.trim()) return;
   try {
@@ -254,6 +265,7 @@ async function renameConversation(conversation) {
 }
 
 async function archiveConversation(conversation) {
+  if (state.streaming) return;
   const archived = !conversation.archived;
   try {
     await jsonRequest(`/api/conversations/${conversation.id}/archive`, {
@@ -268,6 +280,7 @@ async function archiveConversation(conversation) {
 }
 
 async function deleteConversation(conversation) {
+  if (state.streaming) return;
   if (!window.confirm(`Delete conversation "${conversation.name}"?`)) return;
   try {
     await jsonRequest(`/api/conversations/${conversation.id}`, { method: "DELETE" });
@@ -295,12 +308,10 @@ function renderTranscript() {
 }
 
 async function selectConversation(id) {
+  if (state.streaming) return;
   try {
     const conversation = await jsonRequest(`/api/conversations/${id}`);
     state.conversation = conversation;
-    state.assistantText = "";
-    state.assistantNode = null;
-    state.citations = [];
     showView("chat");
     renderSidebar();
     renderTranscript();
@@ -310,71 +321,97 @@ async function selectConversation(id) {
   }
 }
 
-function addStreamStatus(status) {
-  if (!transcript) return;
+function currentStream(context) {
+  return isCurrentStream(context, state.activeStream, state.conversation?.id);
+}
+
+function addStreamStatus(context, status) {
+  if (!currentStream(context) || !transcript) return;
   const node = nodeWithText("p", "stream-status", `${status.toolName || "Assistant"}: ${status.status || "working"}`);
   append(transcript, node);
 }
 
-function createAssistantOutput() {
-  state.assistantText = "";
-  state.citations = [];
-  state.assistantNode = renderAssistantMessage(document, "", false);
+function createAssistantOutput(context) {
+  context.assistantNode = renderAssistantMessage(document, "", false);
   const wrapper = document.createElement("section");
   wrapper.className = "assistant-output";
-  append(wrapper, state.assistantNode);
-  state.citationNode = document.createElement("div");
-  state.citationNode.className = "stream-citations";
-  append(wrapper, state.citationNode);
+  append(wrapper, context.assistantNode);
+  context.citationNode = document.createElement("div");
+  context.citationNode.className = "stream-citations";
+  append(wrapper, context.citationNode);
   append(transcript, wrapper);
 }
 
-function updateAssistant(incomplete = false) {
-  if (!state.assistantNode) return;
-  const replacement = renderAssistantMessage(document, state.assistantText, incomplete);
-  state.assistantNode.parentNode.replaceChild(replacement, state.assistantNode);
-  state.assistantNode = replacement;
+function updateAssistant(context, incomplete = false) {
+  if (!context.assistantNode) return;
+  const parent = context.assistantNode.parentNode;
+  if (!parent) return;
+  const replacement = renderAssistantMessage(document, context.assistantText, incomplete);
+  parent.replaceChild(replacement, context.assistantNode);
+  context.assistantNode = replacement;
 }
 
-function addCitation(citation) {
-  if (!state.citationNode) return;
+function addCitation(context, citation) {
+  if (!currentStream(context) || !context.citationNode) return;
   const link = renderCitation(document, citation);
   if (!link) return;
   const item = document.createElement("p");
   append(item, link);
-  append(state.citationNode, item);
+  append(context.citationNode, item);
 }
 
-function handleStreamEvent(event) {
-  if (!event || typeof event.type !== "string") return;
+function handleStreamEvent(event, context) {
+  if (!event || typeof event.type !== "string" || !currentStream(context) || context.terminal) return;
   if (event.type === "text_delta" && typeof event.delta === "string") {
-    state.assistantText += event.delta;
-    updateAssistant(false);
+    context.assistantText += event.delta;
+    updateAssistant(context, false);
   } else if (event.type === "tool_status") {
-    addStreamStatus(event);
+    addStreamStatus(context, event);
   } else if (event.type === "citation") {
-    state.citations.push(event.citation);
-    addCitation(event.citation);
+    context.citations.push(event.citation);
+    addCitation(context, event.citation);
   } else if (event.type === "complete") {
-    updateAssistant(event.incomplete === true);
+    updateAssistant(context, event.incomplete === true);
+    markStreamTerminal(context, event);
   } else if (event.type === "error") {
-    updateAssistant(event.incomplete === true);
+    updateAssistant(context, event.incomplete === true);
     append(transcript, nodeWithText("p", "stream-error", event.message || "Model turn failed"));
+    markStreamTerminal(context, event);
   }
 }
 
 async function sendMessage(text) {
   if (!state.conversation?.id || state.streaming) return;
+  const conversationId = state.conversation.id;
+  const context = createStreamContext(conversationId);
+  state.activeStream = context;
   state.streaming = true;
+  setNavigationDisabled(true);
+  renderSidebar();
   if (cancelTurn) cancelTurn.hidden = true;
-  createAssistantOutput();
+  createAssistantOutput(context);
   try {
-    await streamRequest(`/api/conversations/${state.conversation.id}/messages`, { text }, handleStreamEvent);
-    await loadProposals();
+    await streamRequest(
+      `/api/conversations/${conversationId}/messages`,
+      { text },
+      (event) => handleStreamEvent(event, context),
+    );
+    if (currentStream(context) && streamNeedsIncomplete(context)) {
+      updateAssistant(context, true);
+    }
+    if (currentStream(context)) await loadProposals(conversationId);
   } catch (error) {
-    append(transcript, nodeWithText("p", "stream-error", errorMessage(error)));
+    if (currentStream(context)) {
+      if (streamNeedsIncomplete(context)) updateAssistant(context, true);
+      append(transcript, nodeWithText("p", "stream-error", errorMessage(error)));
+    }
   } finally {
-    state.streaming = false;
+    if (state.activeStream === context) {
+      state.activeStream = null;
+      state.streaming = false;
+      setNavigationDisabled(false);
+      renderSidebar();
+    }
     if (cancelTurn) cancelTurn.hidden = true;
   }
 }
@@ -635,15 +672,15 @@ async function rejectProposal(proposal) {
   }
 }
 
-async function loadProposals() {
+async function loadProposals(conversationId = state.conversation?.id) {
   if (!drawerContent) return;
-  if (!state.conversation?.id) {
+  if (!conversationId) {
     clear(drawerContent);
     append(drawerContent, nodeWithText("p", "empty-state", "Select a book or pending change."));
     return;
   }
   try {
-    const proposals = await jsonRequest(`/api/conversations/${state.conversation.id}/proposals`);
+    const proposals = await jsonRequest(`/api/conversations/${conversationId}/proposals`);
     clear(drawerContent);
     if (!Array.isArray(proposals) || !proposals.length) {
       append(drawerContent, nodeWithText("p", "empty-state", "No pending changes."));
@@ -665,6 +702,7 @@ async function loadProposals() {
 function wire() {
   byId("new-conversation")?.addEventListener("click", createConversation);
   byId("library-link")?.addEventListener("click", async () => {
+    if (state.streaming) return;
     showView("library");
     await loadSeries();
     await loadLibrary();
