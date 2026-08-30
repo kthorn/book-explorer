@@ -15,10 +15,7 @@ import {
   type ConversationRegistry,
 } from "./conversations.js";
 import type { LibraryRepository } from "./library.js";
-import type {
-  ProposalRegistry,
-  ProposalSession,
-} from "./proposals.js";
+import type { ProposalRegistry, ProposalSession } from "./proposals.js";
 import {
   createCitationCapture,
   type CapturedCitation,
@@ -349,11 +346,7 @@ export class TurnCoordinator {
 
   async cancel(requestId: string): Promise<boolean> {
     const active = this.active;
-    if (
-      !active ||
-      active.requestId !== requestId ||
-      active.phase !== "running"
-    )
+    if (!active || active.requestId !== requestId || active.phase !== "running")
       return false;
     active.cancelled = true;
     void this.abortActive(active);
@@ -493,10 +486,7 @@ export class TurnCoordinator {
               await this.emitError(active, active.failure, emit);
               return;
             }
-            if (
-              active.toolFailure !== undefined &&
-              !active.modelCompleted
-            ) {
+            if (active.toolFailure !== undefined && !active.modelCompleted) {
               await this.emitError(active, active.toolFailure, emit);
               return;
             }
@@ -589,7 +579,9 @@ export class TurnCoordinator {
         const assistant = record(assistantEvent);
         if (assistant?.type === "error") {
           active.incomplete = true;
-          active.pendingFailure = assistantFailure(assistant.error ?? event.message);
+          active.pendingFailure = assistantFailure(
+            assistant.error ?? event.message,
+          );
         }
       }
     } else if (event.type === "tool_execution_start") {
@@ -606,8 +598,10 @@ export class TurnCoordinator {
     } else if (event.type === "message_end" || event.type === "turn_end") {
       const reason = stopReason(event.message);
       if (reason === "length") active.incomplete = true;
-      if (reason === "error") active.pendingFailure = assistantFailure(event.message);
-      if (reason === "aborted") active.pendingFailure = new TurnCancelledError();
+      if (reason === "error")
+        active.pendingFailure = assistantFailure(event.message);
+      if (reason === "aborted")
+        active.pendingFailure = new TurnCancelledError();
     } else if (event.type === "agent_end") {
       active.agentEndSeen = true;
       const message = lastAssistant(event.messages);

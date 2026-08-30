@@ -608,7 +608,9 @@ test("turn proposal tool appends through the active manager without deadlocking 
     author: "Author",
   });
   const driver = driverFixture(async (session) => {
-    const tool = driver.tools?.find((candidate) => candidate.name === "propose_change");
+    const tool = driver.tools?.find(
+      (candidate) => candidate.name === "propose_change",
+    );
     assert.ok(tool);
     const result = await tool.execute(
       "proposal-call",
@@ -776,10 +778,7 @@ test("global gate stays busy through deferred abort and disposal", async () => {
     await abortSeen;
     assert.equal(service.activeRequestId, "request-deferred");
     assert.equal(await service.cancel("request-deferred"), false);
-    const busyDuringAbort = await collectSubmit(
-      service,
-      item.conversations[1],
-    );
+    const busyDuringAbort = await collectSubmit(service, item.conversations[1]);
     assert.deepEqual(busyDuringAbort, [
       {
         type: "error",
