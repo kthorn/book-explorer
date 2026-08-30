@@ -76,11 +76,7 @@ function tool(item: Fixture, name: string): ToolDefinition {
   return found;
 }
 
-async function executeResult(
-  item: Fixture,
-  name: string,
-  input: unknown,
-) {
+async function executeResult(item: Fixture, name: string, input: unknown) {
   return tool(item, name).execute(
     "call-1",
     input as never,
