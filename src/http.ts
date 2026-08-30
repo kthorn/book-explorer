@@ -808,12 +808,16 @@ function safeStreamMessage(error: unknown, fallback: string): string {
   const message =
     (error instanceof Error ? error.message : String(error)).trim() || fallback;
   return message
-    .replace(/Bearer\s+\S+/giu, "Bearer [redacted]")
     .replace(
-      /(?:api[_ -]?key|authorization|token)\s*[:=]\s*\S+/giu,
-      "[redacted]",
+      /((?:(?:api[_ -]?key|authorization|token)\b\s*(?::|=)\s*(?:bearer\s+)?|bearer\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
+      "$1[redacted]",
     )
     .slice(0, 1000);
+}
+
+function safeStreamEvent(event: BrowserStreamEvent): BrowserStreamEvent {
+  if (event.type !== "error") return event;
+  return { ...event, message: safeStreamMessage(event.message, "Model turn failed") };
 }
 
 function classifyStreamError(
@@ -906,7 +910,7 @@ function writeSse(
 ): Promise<void> {
   if (response.destroyed || response.writableEnded)
     return Promise.reject(new Error("SSE socket is closed"));
-  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  const payload = `data: ${JSON.stringify(safeStreamEvent(event))}\n\n`;
   if (response.write(payload)) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     const cleanup = (): void => {
