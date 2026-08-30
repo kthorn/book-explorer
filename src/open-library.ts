@@ -141,14 +141,13 @@ function responseText(value: unknown, label: string): string {
 function responseYear(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number') {
-    if (Number.isSafeInteger(value) && value >= 0 && value <= 9999) return value;
-    return malformed('Open Library response has an invalid publication year');
+    return Number.isSafeInteger(value) && value >= 0 && value <= 9999 ? value : null;
   }
   if (typeof value === 'string') {
-    const match = /^(\d{4})/.exec(value.trim());
-    if (match) return Number(match[1]);
+    const match = /(?:^|[^\d])(\d{4})(?!\d)/u.exec(value);
+    return match ? Number(match[1]) : null;
   }
-  return malformed('Open Library response has an invalid publication year');
+  return null;
 }
 
 function responseYearFrom(record: RecordValue, ...keys: string[]): number | null {
@@ -310,6 +309,7 @@ function parseMetadata(
   fallbackWorkId: string | undefined,
   coversBaseUrl: string,
   extraIdentifiers: OpenLibraryIdentifier[] = [],
+  validateWorkKey = false,
 ): OpenLibraryMetadata {
   const record = asRecord(value);
   if (!record) return malformed();
@@ -322,13 +322,15 @@ function parseMetadata(
     if (fallbackWorkId && record.workId !== undefined && normalizeOpenLibraryWorkId(String(record.workId)) !== workId) {
       return malformed('Open Library response has a conflicting work ID');
     }
-    if (
-      fallbackWorkId
-      && typeof record.key === 'string'
-      && /^(?:\/works\/)?OL[0-9]+W$/iu.test(record.key.trim())
-      && normalizeOpenLibraryWorkId(record.key) !== workId
-    ) {
-      return malformed('Open Library response has a conflicting work ID');
+    if (validateWorkKey && record.key !== undefined) {
+      if (typeof record.key !== 'string') return malformed('Open Library response has an invalid work key');
+      let declaredWorkId: string;
+      try {
+        declaredWorkId = normalizeOpenLibraryWorkId(record.key);
+      } catch {
+        return malformed('Open Library response has an invalid work key');
+      }
+      if (declaredWorkId !== workId) return malformed('Open Library response has a conflicting work ID');
     }
   } catch {
     return malformed('Open Library response has an invalid work ID');
@@ -454,11 +456,33 @@ export class OpenLibraryClient {
     }
 
     if (normalized.kind === 'isbn') {
-      const metadata = await enqueue(() => this.fetchIsbn(normalized.isbn!, normalized.isbnScheme!));
+      const cached = this.findCachedByIsbn(normalized.isbn!);
+      const fresh = cached.find((entry) => this.isFresh(entry));
+      if (!refresh && fresh) return { metadata: fresh.metadata };
+      let metadata: OpenLibraryMetadata;
+      try {
+        metadata = await enqueue(() => this.fetchIsbn(normalized.isbn!, normalized.isbnScheme!));
+      } catch (error) {
+        if (cached[0]) return { metadata: cached[0].metadata, stale: true, refreshError: refreshError(error) };
+        throw error;
+      }
       this.writeCache(metadata);
       return { metadata };
     }
-    const candidates = await enqueue(() => this.fetchSearch(normalized.title!, normalized.author!));
+
+    const cached = this.findCachedByTitleAuthor(normalized.title!, normalized.author!);
+    if (!refresh && cached.length > 0 && cached.every((entry) => this.isFresh(entry))) {
+      return { candidates: cached.map((entry) => entry.metadata) };
+    }
+    let candidates: OpenLibraryCandidate[];
+    try {
+      candidates = await enqueue(() => this.fetchSearch(normalized.title!, normalized.author!));
+    } catch (error) {
+      if (cached.length > 0) {
+        return { candidates: cached.map((entry) => entry.metadata), stale: true, refreshError: refreshError(error) };
+      }
+      throw error;
+    }
     for (const candidate of candidates) this.writeCache(candidate);
     return { candidates };
   }
@@ -521,7 +545,7 @@ export class OpenLibraryClient {
 
   private async fetchWork(workId: string): Promise<OpenLibraryMetadata> {
     const body = await this.fetchJson(this.url(`works/${workId}.json`));
-    return parseMetadata(body, workId, this.coversBaseUrl);
+    return parseMetadata(body, workId, this.coversBaseUrl, [], true);
   }
 
   private async fetchIsbn(isbn: string, scheme: 'isbn10' | 'isbn13'): Promise<OpenLibraryMetadata> {
@@ -572,7 +596,7 @@ export class OpenLibraryClient {
       }
       if (seen.has(workId)) continue;
       try {
-        const metadata = parseMetadata(candidate, workId, this.coversBaseUrl);
+        const metadata = parseMetadata(candidate, workId, this.coversBaseUrl, [], true);
         seen.add(workId);
         candidates.push(metadata);
       } catch (error) {
@@ -590,14 +614,41 @@ export class OpenLibraryClient {
 
   private readCache(workId: string): CacheEntry | null {
     const row = this.db.prepare(LIBRARY_SQL.selectOpenLibraryCache).get(workId) as CacheRow | undefined;
-    if (!row || Number(row.payload_version) !== CACHE_PAYLOAD_VERSION) return null;
+    return this.readCacheRow(row);
+  }
+
+  private readCaches(): CacheEntry[] {
+    // ponytail: O(n) local-cache scan; add lookup-key columns if cache size makes it measurable.
+    // SAFETY: DatabaseSync returns rows matching the cache SELECT columns.
+    const rows = this.db.prepare(LIBRARY_SQL.selectOpenLibraryCaches).all() as unknown as CacheRow[];
+    return rows.flatMap((row) => {
+      const entry = this.readCacheRow(row);
+      return entry ? [entry] : [];
+    });
+  }
+
+  private findCachedByIsbn(isbn: string): CacheEntry[] {
+    return this.readCaches().filter((entry) => entry.metadata.identifiers.some((identifier) => identifier.value === isbn));
+  }
+
+  private findCachedByTitleAuthor(title: string, author: string): CacheEntry[] {
+    const normalizedTitle = normalizeName(title);
+    const normalizedAuthor = normalizeName(author);
+    return this.readCaches().filter((entry) => {
+      return normalizeName(entry.metadata.title) === normalizedTitle
+        && normalizeName(entry.metadata.author) === normalizedAuthor;
+    });
+  }
+
+  private readCacheRow(row: CacheRow | undefined): CacheEntry | null {
+    if (!row || typeof row.work_id !== 'string' || Number(row.payload_version) !== CACHE_PAYLOAD_VERSION) return null;
     const retrievedAt = safeDate(row.retrieved_at);
     if (retrievedAt === null || typeof row.payload !== 'string') return null;
     try {
       const payload = JSON.parse(row.payload) as unknown;
       const payloadRecord = asRecord(payload);
       if (!payloadRecord || typeof payloadRecord.workId !== 'string') return null;
-      const metadata = parseMetadata(payload, workId, this.coversBaseUrl);
+      const metadata = parseMetadata(payload, row.work_id, this.coversBaseUrl);
       return { metadata, retrievedAt };
     } catch {
       return null;

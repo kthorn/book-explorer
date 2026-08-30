@@ -149,6 +149,24 @@ test('Open Library preserves documented author references when names are unavail
   }
 });
 
+test('Open Library treats unparseable optional publication dates as null', async () => {
+  const fixture = await serverFixture();
+  try {
+    fixture.setHandler((_request, response) => json(response, 200, {
+      title: 'Undated work',
+      authors: [{ name: 'An Author' }],
+      first_publish_date: 'publication date unknown',
+    }));
+    await withDatabase(async (db) => {
+      const client = new OpenLibraryClient(db, { baseUrl: fixture.baseUrl });
+      const result = await client.lookup({ workId: 'OL124W' });
+      assert.equal(result.metadata?.publicationYear, null);
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('Open Library caps parsed identifier aliases at the v1 limit', async () => {
   const fixture = await serverFixture();
   try {
@@ -181,7 +199,7 @@ test('Open Library uses ISBN and title-author search endpoints', async () => {
           title: 'The Dispossessed',
           authors: [{ name: 'Ursula K. Le Guin' }],
           works: [{ key: '/works/OL123W' }],
-          publish_date: '1974',
+          publish_date: 'October 1, 1988',
           covers: [123],
           isbn_13: ['9780306406157'],
         });
@@ -192,8 +210,8 @@ test('Open Library uses ISBN and title-author search endpoints', async () => {
           numFound: 1,
           docs: [{
             key: '/works/OL123W',
-            title: 'The Dispossessed',
-            author_name: ['Ursula K. Le Guin'],
+            title: 'A Search',
+            author_name: ['Search Author'],
             first_publish_year: 1974,
             cover_i: 123,
             isbn: ['9780306406157'],
@@ -207,14 +225,15 @@ test('Open Library uses ISBN and title-author search endpoints', async () => {
       const client = new OpenLibraryClient(db, { baseUrl: fixture.baseUrl });
       const isbnResult = await client.lookup({ isbn: '978-0-306-40615-7' });
       assert.equal(isbnResult.metadata?.workId, 'OL123W');
+      assert.equal(isbnResult.metadata?.publicationYear, 1988);
       assert.equal(isbnResult.metadata?.identifiers.some((item: OpenLibraryMetadata['identifiers'][number]) => item.value === '9780306406157'), true);
-      const searchResult = await client.lookup({ title: 'The Dispossessed', author: 'Ursula K. Le Guin' });
+      const searchResult = await client.lookup({ title: 'A Search', author: 'Search Author' });
       assert.equal(searchResult.candidates?.length, 1);
       assert.equal(searchResult.candidates?.[0]?.workId, 'OL123W');
       const searchUrl = new URL(fixture.requests[1] ?? '', fixture.baseUrl);
       assert.equal(searchUrl.pathname, '/search.json');
-      assert.equal(searchUrl.searchParams.get('title'), 'The Dispossessed');
-      assert.equal(searchUrl.searchParams.get('author'), 'Ursula K. Le Guin');
+      assert.equal(searchUrl.searchParams.get('title'), 'A Search');
+      assert.equal(searchUrl.searchParams.get('author'), 'Search Author');
     });
   } finally {
     await fixture.close();
@@ -309,11 +328,11 @@ test('Open Library retains stale metadata and exposes failed refresh errors', as
   }
 });
 
-test('Open Library rejects a work response whose key conflicts with the requested work', async () => {
+test('Open Library rejects a malformed work key even with a requested fallback ID', async () => {
   const fixture = await serverFixture();
   try {
     fixture.setHandler((_request, response) => json(response, 200, {
-      key: '/works/OL999W',
+      key: '/works/not-valid',
       title: 'Wrong work',
       authors: [{ name: 'An Author' }],
     }));
@@ -322,6 +341,95 @@ test('Open Library rejects a work response whose key conflicts with the requeste
       await assert.rejects(() => client.lookup({ workId: 'OL123W' }), (error: unknown) => {
         return typeof error === 'object' && error !== null && 'code' in error && (error as { code: string }).code === 'malformed_response';
       });
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Open Library reuses fresh and stale ISBN cache entries', async () => {
+  const fixture = await serverFixture();
+  try {
+    let status = 200;
+    let title = 'ISBN cached';
+    fixture.setHandler((_request, response) => {
+      if (status !== 200) return json(response, status, { error: 'slow down' });
+      return json(response, 200, {
+        title,
+        authors: [{ name: 'An Author' }],
+        works: [{ key: '/works/OL200W' }],
+        publish_date: 'October 1, 1988',
+        isbn_13: ['9780306406157'],
+      });
+    });
+    let now = Date.parse('2026-08-29T00:00:00.000Z');
+    await withDatabase(async (db) => {
+      const client = new OpenLibraryClient(db, { baseUrl: fixture.baseUrl, now: () => now });
+      const first = await client.lookup({ isbn: '978-0-306-40615-7' });
+      assert.equal(first.metadata?.title, 'ISBN cached');
+      const cached = await client.lookup({ isbn: '9780306406157' });
+      assert.equal(cached.metadata?.title, 'ISBN cached');
+      assert.equal(fixture.requests.length, 1);
+
+      now += 31 * 24 * 60 * 60 * 1000;
+      status = 429;
+      const stale = await client.lookup({ isbn: '9780306406157' });
+      assert.equal(stale.metadata?.title, 'ISBN cached');
+      assert.equal(stale.stale, true);
+      assert.equal(stale.refreshError?.code, 'rate_limited');
+      assert.equal(fixture.requests.length, 2);
+
+      status = 200;
+      title = 'ISBN replaced';
+      const refreshed = await client.lookup({ isbn: '9780306406157' }, { refresh: true });
+      assert.equal(refreshed.metadata?.title, 'ISBN replaced');
+      assert.equal(fixture.requests.length, 3);
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('Open Library reuses fresh and stale title-author cache entries', async () => {
+  const fixture = await serverFixture();
+  try {
+    let status = 200;
+    let title = 'Search cached';
+    fixture.setHandler((_request, response) => {
+      if (status !== 200) return json(response, status, { error: 'slow down' });
+      return json(response, 200, {
+        numFound: 1,
+        docs: [{
+          key: '/works/OL201W',
+          title,
+          author_name: ['An Author'],
+          first_publish_year: 1988,
+          isbn: ['9780306406157'],
+        }],
+      });
+    });
+    let now = Date.parse('2026-08-29T00:00:00.000Z');
+    await withDatabase(async (db) => {
+      const client = new OpenLibraryClient(db, { baseUrl: fixture.baseUrl, now: () => now });
+      const first = await client.lookup({ title: 'Search cached', author: 'An Author' });
+      assert.equal(first.candidates?.[0]?.title, 'Search cached');
+      const cached = await client.lookup({ title: 'Search cached', author: 'An Author' });
+      assert.equal(cached.candidates?.[0]?.title, 'Search cached');
+      assert.equal(fixture.requests.length, 1);
+
+      now += 31 * 24 * 60 * 60 * 1000;
+      status = 429;
+      const stale = await client.lookup({ title: 'Search cached', author: 'An Author' });
+      assert.equal(stale.candidates?.[0]?.title, 'Search cached');
+      assert.equal(stale.stale, true);
+      assert.equal(stale.refreshError?.code, 'rate_limited');
+      assert.equal(fixture.requests.length, 2);
+
+      status = 200;
+      title = 'Search replaced';
+      const refreshed = await client.lookup({ title: 'Search cached', author: 'An Author' }, { refresh: true });
+      assert.equal(refreshed.candidates?.[0]?.title, 'Search replaced');
+      assert.equal(fixture.requests.length, 3);
     });
   } finally {
     await fixture.close();
