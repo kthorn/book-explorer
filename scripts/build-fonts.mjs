@@ -5,7 +5,10 @@ mkdirSync(output, { recursive: true });
 
 for (const [source, target] of [
   ["inter/files/inter-latin-wght-normal.woff2", "inter.woff2"],
-  ["source-sans-3/files/source-sans-3-latin-wght-normal.woff2", "source-sans-3.woff2"],
+  [
+    "source-sans-3/files/source-sans-3-latin-wght-normal.woff2",
+    "source-sans-3.woff2",
+  ],
   ["literata/files/literata-latin-wght-normal.woff2", "literata.woff2"],
 ]) {
   copyFileSync(
