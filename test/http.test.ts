@@ -900,8 +900,8 @@ test("HTTP state changes require exact Host, Origin, CSRF, and JSON content type
   try {
     for (const options of [
       { csrf: "wrong" },
-      { host: "localhost:" + item.port },
-      { origin: "http://localhost:" + item.port },
+      { host: "book-explorer.invalid:" + item.port },
+      { origin: "http://book-explorer.invalid:" + item.port },
       { contentType: "text/plain" },
     ]) {
       const response = await call(
@@ -927,6 +927,15 @@ test("HTTP state changes require exact Host, Origin, CSRF, and JSON content type
         .code,
       "payload_too_large",
     );
+    for (const alias of ["localhost", "127.0.0.1"]) {
+      const response = await call(item, "POST", "/api/conversations", {
+        name: "Alias " + alias,
+      }, {
+        host: alias + ":" + item.port,
+        origin: `http://${alias}:${item.port}`,
+      });
+      assert.equal(response.status, 201);
+    }
     const csrfA = item.api.csrfToken;
     const other = fixture();
     assert.notEqual(csrfA, other.api.csrfToken);
