@@ -343,7 +343,10 @@ test("Open Library requests are single-flight and FIFO across lookups", async ()
       const first = client.lookup({ workId: "OL1W" });
       const second = client.lookup({ workId: "OL2W" });
       const third = client.lookup({ workId: "OL3W" });
-      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      const deadline = Date.now() + 5_000;
+      while (fixture.requests.length === 0 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
       assert.deepEqual(fixture.requests, ["/works/OL1W.json"]);
       assert.equal(fixture.maxInFlight, 1);
       releaseFirst.resolve();

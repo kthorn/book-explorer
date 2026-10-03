@@ -106,7 +106,8 @@ export const LIBRARY_SQL = {
   selectBook: `
     SELECT b.id, b.title, b.author, b.publication_year, b.cover_url,
            b.series_id, b.series_position, b.status, b.rating,
-           b.created_at, b.updated_at, s.name AS series_name
+           b.created_at, b.updated_at, s.name AS series_name,
+           (SELECT COUNT(*) FROM book_notes AS n WHERE n.book_id = b.id) AS note_count
     FROM books AS b
     LEFT JOIN series AS s ON s.id = b.series_id
     WHERE b.id = ?`,
@@ -206,7 +207,8 @@ export const LIBRARY_SQL = {
   searchBooks: `
     SELECT b.id, b.title, b.author, b.publication_year, b.cover_url,
            b.series_id, b.series_position, b.status, b.rating,
-           b.created_at, b.updated_at, s.name AS series_name
+           b.created_at, b.updated_at, s.name AS series_name,
+           (SELECT COUNT(*) FROM book_notes AS n WHERE n.book_id = b.id) AS note_count
     FROM books AS b
     LEFT JOIN series AS s ON s.id = b.series_id
     WHERE (? IS NULL OR b.normalized_title LIKE '%' || ? || '%' OR b.normalized_author LIKE '%' || ? || '%')

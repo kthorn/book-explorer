@@ -27,6 +27,10 @@ interface Renderers {
     content: unknown,
     incomplete?: boolean,
   ): FakeNodeLike;
+  renderBookSummary(
+    document: FakeDocument,
+    book: { id: number; title: string; author: string; noteCount: number },
+  ): FakeNodeLike;
   createStreamContext(conversationId: number): {
     conversationId: number;
     assistantText: string;
@@ -84,7 +88,10 @@ const renderer = (async (): Promise<Renderers> => {
   return module;
 })();
 
-function findTag(node: FakeNodeLike, tagName: string): FakeNodeLike | undefined {
+function findTag(
+  node: FakeNodeLike,
+  tagName: string,
+): FakeNodeLike | undefined {
   if (node.tagName === tagName) return node;
   for (const child of node.children) {
     const match = findTag(child, tagName);
@@ -183,6 +190,26 @@ test("static assets resolve relative to the module instead of the working direct
     process.chdir(originalCwd);
     rmSync(emptyCwd, { recursive: true, force: true });
   }
+});
+
+test("book summaries indicate notes without exposing their contents", async () => {
+  const { renderBookSummary } = await renderer;
+  const withNotes = renderBookSummary(new FakeDocument(), {
+    id: 1,
+    title: "Book",
+    author: "Author",
+    noteCount: 2,
+  });
+  const withoutNotes = renderBookSummary(new FakeDocument(), {
+    id: 2,
+    title: "Other Book",
+    author: "Other Author",
+    noteCount: 0,
+  });
+
+  assert.match(withNotes.textContent, /Has notes/);
+  assert.doesNotMatch(withNotes.textContent, /First note|Second note/);
+  assert.doesNotMatch(withoutNotes.textContent, /Has notes/);
 });
 
 test("assistant Markdown renders formatting while keeping raw HTML inert", async () => {

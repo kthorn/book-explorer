@@ -50,7 +50,9 @@ interface RuntimeOptions {
 
 interface FakeRuntime {
   getModel(provider: string, id: string): FakeModel | undefined;
-  checkAuth(provider: string): Promise<{ type: "oauth" | "api_key" } | undefined>;
+  checkAuth(
+    provider: string,
+  ): Promise<{ type: "oauth" | "api_key" } | undefined>;
   refresh(options: {
     allowNetwork: boolean;
     providers: readonly string[];
@@ -87,18 +89,34 @@ function oauthCredential(): Record<string, unknown> {
   };
 }
 
-function runtimeFixture(options: {
-  model?: FakeModel | null;
-  auth?: { type: "oauth" | "api_key" };
-  refresh?: () => Promise<{ aborted: boolean; errors: ReadonlyMap<string, Error> }>;
-} = {}): { runtime: FakeRuntime; dependencies: RuntimeDependencies; calls: { runtime: unknown[]; refresh: unknown[] } } {
+function runtimeFixture(
+  options: {
+    model?: FakeModel | null;
+    auth?: { type: "oauth" | "api_key" };
+    refresh?: () => Promise<{
+      aborted: boolean;
+      errors: ReadonlyMap<string, Error>;
+    }>;
+  } = {},
+): {
+  runtime: FakeRuntime;
+  dependencies: RuntimeDependencies;
+  calls: { runtime: unknown[]; refresh: unknown[] };
+} {
   const calls = { runtime: [] as unknown[], refresh: [] as unknown[] };
   const runtime: FakeRuntime = {
-    getModel: (provider, id) => provider === "openai-codex" && id === "gpt-5.6-sol" ? options.model === null ? undefined : options.model ?? { provider, id } : undefined,
+    getModel: (provider, id) =>
+      provider === "openai-codex" && id === "gpt-5.6-sol"
+        ? options.model === null
+          ? undefined
+          : (options.model ?? { provider, id })
+        : undefined,
     checkAuth: async () => options.auth ?? { type: "oauth" },
     refresh: async (refreshOptions) => {
       calls.refresh.push(refreshOptions);
-      return options.refresh ? options.refresh() : { aborted: false, errors: new Map() };
+      return options.refresh
+        ? options.refresh()
+        : { aborted: false, errors: new Map() };
     },
   };
   return {
@@ -118,7 +136,10 @@ function cleanup(fixture: { directory: string }): void {
   rmSync(fixture.directory, { recursive: true, force: true });
 }
 
-async function withOffline<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+async function withOffline<T>(
+  value: string | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
   const previous = process.env.PI_OFFLINE;
   if (value === undefined) delete process.env.PI_OFFLINE;
   else process.env.PI_OFFLINE = value;
@@ -134,9 +155,14 @@ test("runtime selects exactly the Sol model with medium thinking and app-local m
   const fixture = pathsFixture();
   try {
     const { runtime, dependencies, calls } = runtimeFixture();
-    const state = await withOffline(undefined, () => initializeAgentRuntime(fixture.paths, dependencies)) as unknown as ExpectedState;
+    const state = (await withOffline(undefined, () =>
+      initializeAgentRuntime(fixture.paths, dependencies),
+    )) as unknown as ExpectedState;
     assert.equal(state.runtime, runtime);
-    assert.deepEqual(state.model, { provider: "openai-codex", id: "gpt-5.6-sol" });
+    assert.deepEqual(state.model, {
+      provider: "openai-codex",
+      id: "gpt-5.6-sol",
+    });
     assert.equal(state.thinkingLevel, "medium");
     assert.equal(state.libraryOnlyReason, undefined);
     assert.equal(calls.runtime.length, 1);
@@ -146,7 +172,10 @@ test("runtime selects exactly the Sol model with medium thinking and app-local m
       modelsStorePath: fixture.paths.modelsStorePath,
       refreshOnCreate: false,
     });
-    assert.deepEqual(JSON.parse(readFileSync(fixture.paths.webSearchConfigPath, "utf8")), PINNED_WEB_SEARCH_CONFIG);
+    assert.deepEqual(
+      JSON.parse(readFileSync(fixture.paths.webSearchConfigPath, "utf8")),
+      PINNED_WEB_SEARCH_CONFIG,
+    );
     assert.ok(existsSync(fixture.paths.webSearchCacheDir));
   } finally {
     cleanup(fixture);
@@ -158,7 +187,9 @@ test("PI_OFFLINE accepts the three documented truthy values and starts library-o
     const fixture = pathsFixture();
     try {
       const { dependencies, calls } = runtimeFixture();
-      const state = await withOffline(value, () => initializeAgentRuntime(fixture.paths, dependencies)) as unknown as ExpectedState;
+      const state = (await withOffline(value, () =>
+        initializeAgentRuntime(fixture.paths, dependencies),
+      )) as unknown as ExpectedState;
       assert.equal(state.model, undefined, value);
       assert.equal(state.libraryOnlyReason, "offline", value);
       assert.equal(calls.refresh.length, 0, value);
@@ -176,11 +207,18 @@ test("runtime rejects missing, expired, and non-OAuth Codex credentials before m
   ]) {
     const fixture = pathsFixture();
     try {
-      const { dependencies } = runtimeFixture({ auth: credential?.type === "api_key" ? { type: "api_key" } : { type: "oauth" } });
+      const { dependencies } = runtimeFixture({
+        auth:
+          credential?.type === "api_key"
+            ? { type: "api_key" }
+            : { type: "oauth" },
+      });
       dependencies.credentialReader = () => credential as never;
       await assert.rejects(
         () => initializeAgentRuntime(fixture.paths, dependencies),
-        (error: unknown) => error instanceof Error && /OAuth|expired|openai-codex/i.test(error.message),
+        (error: unknown) =>
+          error instanceof Error &&
+          /OAuth|expired|openai-codex/i.test(error.message),
       );
     } finally {
       cleanup(fixture);
@@ -191,13 +229,20 @@ test("runtime rejects missing, expired, and non-OAuth Codex credentials before m
 test("runtime inspects explicit refresh abort and provider errors as library-only", async () => {
   for (const refresh of [
     async () => ({ aborted: true, errors: new Map<string, Error>() }),
-    async () => ({ aborted: false, errors: new Map([["openai-codex", new Error("catalog failed")]]) }),
-    async () => { throw new Error("catalog timed out"); },
+    async () => ({
+      aborted: false,
+      errors: new Map([["openai-codex", new Error("catalog failed")]]),
+    }),
+    async () => {
+      throw new Error("catalog timed out");
+    },
   ]) {
     const fixture = pathsFixture();
     try {
       const { dependencies } = runtimeFixture({ refresh });
-      const state = await withOffline(undefined, () => initializeAgentRuntime(fixture.paths, dependencies)) as unknown as ExpectedState;
+      const state = (await withOffline(undefined, () =>
+        initializeAgentRuntime(fixture.paths, dependencies),
+      )) as unknown as ExpectedState;
       assert.equal(state.model, undefined);
       assert.match(state.libraryOnlyReason ?? "", /refresh|catalog/i);
     } finally {
@@ -210,7 +255,10 @@ test("runtime rejects a non-OAuth result even when the catalog model exists", as
   const fixture = pathsFixture();
   try {
     const { dependencies } = runtimeFixture({ auth: { type: "api_key" } });
-    await assert.rejects(() => initializeAgentRuntime(fixture.paths, dependencies), /OAuth/i);
+    await assert.rejects(
+      () => initializeAgentRuntime(fixture.paths, dependencies),
+      /OAuth/i,
+    );
   } finally {
     cleanup(fixture);
   }
@@ -220,7 +268,10 @@ test("unavailable pinned model is library-only without selecting another model",
   const fixture = pathsFixture();
   try {
     const { dependencies } = runtimeFixture({ model: null });
-    const state = await initializeAgentRuntime(fixture.paths, dependencies) as unknown as ExpectedState;
+    const state = (await initializeAgentRuntime(
+      fixture.paths,
+      dependencies,
+    )) as unknown as ExpectedState;
     assert.equal(state.model, undefined);
     assert.match(state.libraryOnlyReason ?? "", /model/i);
   } finally {
@@ -232,7 +283,10 @@ test("config rejects openaiApiKey and scrubs credentials before extension loadin
   const fixture = pathsFixture();
   const previousKey = process.env.OPENAI_API_KEY;
   try {
-    writeFileSync(fixture.paths.webSearchConfigPath, JSON.stringify({ openaiApiKey: "must-not-be-used" }));
+    writeFileSync(
+      fixture.paths.webSearchConfigPath,
+      JSON.stringify({ openaiApiKey: "must-not-be-used" }),
+    );
     const { dependencies } = runtimeFixture();
     let imported = false;
     dependencies.extensionImporter = async () => {
@@ -242,13 +296,23 @@ test("config rejects openaiApiKey and scrubs credentials before extension loadin
     };
     dependencies.loaderFactory = () => ({ reload: async () => {} }) as never;
     process.env.OPENAI_API_KEY = "must-not-be-used";
-    await assert.rejects(() => initializeAgentRuntime(fixture.paths, dependencies), /openaiApiKey/i);
+    await assert.rejects(
+      () => initializeAgentRuntime(fixture.paths, dependencies),
+      /openaiApiKey/i,
+    );
     assert.equal(imported, false);
 
     rmSync(fixture.paths.webSearchConfigPath, { force: true });
-    const state = await initializeAgentRuntime(fixture.paths, dependencies) as unknown as ExpectedState;
+    const state = (await initializeAgentRuntime(
+      fixture.paths,
+      dependencies,
+    )) as unknown as ExpectedState;
     const capture: CitationCapture = new Map();
-    const loader = await createTurnLoader(state as unknown as AgentRuntimeState, [], capture);
+    const loader = await createTurnLoader(
+      state as unknown as AgentRuntimeState,
+      [],
+      capture,
+    );
     assert.ok(loader);
     assert.equal(imported, true);
   } finally {
@@ -262,17 +326,27 @@ test("web-search config and cache overrides must stay under the application agen
   const fixture = pathsFixture();
   try {
     assert.throws(
-      () => resolveApplicationPaths({
-        ...fixture.paths,
-        webSearchConfigPath: join(fixture.directory, "outside", "web-search.json"),
-      }),
+      () =>
+        resolveApplicationPaths({
+          ...fixture.paths,
+          webSearchConfigPath: join(
+            fixture.directory,
+            "outside",
+            "web-search.json",
+          ),
+        }),
       /agent directory|agentDir|web-search/i,
     );
     assert.throws(
-      () => resolveApplicationPaths({
-        ...fixture.paths,
-        webSearchCacheDir: join(fixture.directory, "outside", "web-search-cache"),
-      }),
+      () =>
+        resolveApplicationPaths({
+          ...fixture.paths,
+          webSearchCacheDir: join(
+            fixture.directory,
+            "outside",
+            "web-search-cache",
+          ),
+        }),
       /agent directory|agentDir|web-search/i,
     );
   } finally {
@@ -286,18 +360,32 @@ test("actual pi-web-access reads the application agent config after env isolatio
   const decoyDir = join(fixture.directory, "decoy-agent");
   try {
     mkdirSync(decoyDir, { recursive: true });
-    writeFileSync(join(decoyDir, "web-search.json"), JSON.stringify({ tools: { webSearch: { enabled: false } } }));
+    writeFileSync(
+      join(decoyDir, "web-search.json"),
+      JSON.stringify({ tools: { webSearch: { enabled: false } } }),
+    );
     process.env.PI_CODING_AGENT_DIR = decoyDir;
     const { dependencies } = runtimeFixture();
-    const state = await initializeAgentRuntime(fixture.paths, dependencies) as unknown as AgentRuntimeState;
+    const state = (await initializeAgentRuntime(
+      fixture.paths,
+      dependencies,
+    )) as unknown as AgentRuntimeState;
     const loader = await createTurnLoader(state, [], new Map());
     const result = loader.getExtensions();
-    const extension = result.extensions.find((entry) => entry.path.includes("pi-web-access"));
+    const extension = result.extensions.find((entry) =>
+      entry.path.includes("pi-web-access"),
+    );
     assert.ok(extension);
     assert.equal(result.errors.length, 0);
     assert.equal(extension.tools.has("web_search"), true);
-    assert.equal(state.paths.webSearchConfigPath, join(state.paths.agentDir, "web-search.json"));
-    assert.equal(state.paths.webSearchCacheDir, join(state.paths.agentDir, "web-search-cache"));
+    assert.equal(
+      state.paths.webSearchConfigPath,
+      join(state.paths.agentDir, "web-search.json"),
+    );
+    assert.equal(
+      state.paths.webSearchCacheDir,
+      join(state.paths.agentDir, "web-search-cache"),
+    );
   } finally {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -309,7 +397,10 @@ test("turn loader uses only the application directories and exact tool allowlist
   const fixture = pathsFixture();
   try {
     const { dependencies } = runtimeFixture();
-    const state = await initializeAgentRuntime(fixture.paths, dependencies) as unknown as ExpectedState;
+    const state = (await initializeAgentRuntime(
+      fixture.paths,
+      dependencies,
+    )) as unknown as ExpectedState;
     const observed: unknown[] = [];
     state.dependencies = {
       ...state.dependencies,
@@ -321,7 +412,11 @@ test("turn loader uses only the application directories and exact tool allowlist
         } as never;
       },
     };
-    const loader = await createTurnLoader(state as unknown as AgentRuntimeState, [], new Map());
+    const loader = await createTurnLoader(
+      state as unknown as AgentRuntimeState,
+      [],
+      new Map(),
+    );
     assert.ok(loader);
     const options = observed[0] as Record<string, unknown> & {
       appendSystemPromptOverride?: (base: string[]) => string[];
@@ -332,16 +427,21 @@ test("turn loader uses only the application directories and exact tool allowlist
     assert.equal(options.noExtensions, true);
     assert.equal(options.noSkills, true);
     assert.equal(options.noContextFiles, true);
-    assert.deepEqual(options.additionalExtensionPaths, ["/extension/pi-web-access.ts"]);
+    assert.deepEqual(options.additionalExtensionPaths, [
+      "/extension/pi-web-access.ts",
+    ]);
     assert.deepEqual(options.appendSystemPromptOverride?.([]), []);
-    assert.equal((options.systemPromptOverride as () => string)().includes("includeContent"), true);
+    const systemPrompt = (options.systemPromptOverride as () => string)();
+    assert.equal(systemPrompt.includes("includeContent"), true);
+    assert.match(systemPrompt, /summarize.*library changes/i);
+    assert.match(systemPrompt, /correct.*book detail/i);
     assert.deepEqual(ACTIVE_TOOL_NAMES, [
       "search_library",
       "get_book",
       "upsert_book",
       "upsert_series",
       "record_recommendation",
-      "propose_change",
+      "update_library",
       "web_search",
     ]);
   } finally {

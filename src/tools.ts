@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { Type } from "@earendil-works/pi-ai";
 import {
   defineTool,
@@ -20,7 +22,6 @@ import {
   type ReadingStatus,
 } from "./normalize.js";
 import {
-  createProposal,
   ProposalAlreadyDecidedError,
   ProposalNotFoundError,
   type ProposalRegistry,
@@ -143,16 +144,14 @@ const recordRecommendationParameters = Type.Object(
   },
   TOOL_OBJECT_OPTIONS,
 );
-const proposalSharedProperties = {
+const libraryUpdateSharedProperties = {
   bookId: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-  semanticSlot: Type.String({ minLength: 1, maxLength: 100 }),
-  explanation: Type.String({ minLength: 1, maxLength: 2000 }),
 };
 
-const proposeChangeParameters = Type.Union([
+const updateLibraryParameters = Type.Union([
   Type.Object(
     {
-      ...proposalSharedProperties,
+      ...libraryUpdateSharedProperties,
       kind: Type.Literal("status"),
       value: readingStatusSchema,
     },
@@ -160,7 +159,7 @@ const proposeChangeParameters = Type.Union([
   ),
   Type.Object(
     {
-      ...proposalSharedProperties,
+      ...libraryUpdateSharedProperties,
       kind: Type.Literal("rating"),
       value: Type.Integer({ minimum: 1, maximum: 5 }),
     },
@@ -168,7 +167,7 @@ const proposeChangeParameters = Type.Union([
   ),
   Type.Object(
     {
-      ...proposalSharedProperties,
+      ...libraryUpdateSharedProperties,
       kind: Type.Literal("note"),
       value: Type.String({ minLength: 1, maxLength: 4000 }),
     },
@@ -426,38 +425,30 @@ function validateRecommendationInput(
   };
 }
 
-function validateProposalInput(input: unknown): {
+function validateLibraryUpdate(input: unknown): {
   bookId: number;
   kind: "status" | "rating" | "note";
   value: ReadingStatus | number | string;
-  semanticSlot: string;
-  explanation: string;
 } {
-  const value = inputObject(input, [
-    "bookId",
-    "kind",
-    "value",
-    "semanticSlot",
-    "explanation",
-  ]);
+  const value = inputObject(input, ["bookId", "kind", "value"]);
   const kind = value.kind;
   if (kind !== "status" && kind !== "rating" && kind !== "note") {
-    throw new ValidationError("Proposal kind must be status, rating, or note");
+    throw new ValidationError(
+      "Library update kind must be status, rating, or note",
+    );
   }
-  const proposalValue =
+  const updateValue =
     kind === "status"
       ? optionalReadingStatus(value.value)
       : kind === "rating"
-        ? boundedInteger(value.value, "Proposal rating", 1, 5)
-        : requiredText(value.value, "Proposal note", 4000);
-  if (proposalValue === undefined)
-    throw new ValidationError("Proposal status is required");
+        ? boundedInteger(value.value, "Rating", 1, 5)
+        : requiredText(value.value, "Note", 4000);
+  if (updateValue === undefined)
+    throw new ValidationError("Status is required");
   return {
     bookId: positiveInteger(value.bookId, "Book ID"),
     kind,
-    value: proposalValue,
-    semanticSlot: requiredText(value.semanticSlot, "Semantic slot", 100),
-    explanation: requiredText(value.explanation, "Proposal explanation", 2000),
+    value: updateValue,
   };
 }
 
@@ -532,13 +523,7 @@ async function executeTool<T>(
 export function createBookExplorerTools(
   context: BookExplorerToolContext,
 ): ToolDefinition[] {
-  const {
-    library,
-    proposalRegistry,
-    conversationId,
-    requestId,
-    citationCapture,
-  } = context;
+  const { library, conversationId, requestId, citationCapture } = context;
   const searchLibrary = defineTool({
     name: "search_library",
     label: "Search library",
@@ -614,28 +599,52 @@ export function createBookExplorerTools(
     },
   });
 
-  const proposeChange = defineTool({
-    name: "propose_change",
-    label: "Propose library change",
-    description:
-      "Propose a user-owned status, rating, or opinion note for approval.",
-    parameters: proposeChangeParameters,
+  const updateLibrary = defineTool({
+    name: "update_library",
+    label: "Update library",
+    description: "Directly update a book's status or rating, or add a note.",
+    parameters: updateLibraryParameters,
     async execute(_toolCallId, params) {
-      return executeTool(async () => {
-        const input = validateProposalInput(params);
-        const proposal = await createProposal(
-          proposalRegistry,
-          conversationId,
-          {
-            requestId,
+      return executeTool(() => {
+        const input = validateLibraryUpdate(params);
+        if (input.kind === "note") {
+          const book = library.getBook(input.bookId);
+          if (!book)
+            throw new RecordNotFoundError(`Book ${input.bookId} was not found`);
+          const sourceId = `direct:${createHash("sha256")
+            .update(JSON.stringify([requestId, input.bookId, input.value]))
+            .digest("hex")}`;
+          const note =
+            book.notes.find(
+              (candidate) => candidate.sourceProposalId === sourceId,
+            ) ??
+            library.addNote(
+              input.bookId,
+              input.value as string,
+              conversationId,
+              sourceId,
+            );
+          return {
             bookId: input.bookId,
             kind: input.kind,
-            value: input.value,
-            semanticSlot: input.semanticSlot,
-            explanation: input.explanation,
-          },
+            value: note.note,
+            noteId: note.id,
+          };
+        }
+        const book = library.updateBook(
+          input.bookId,
+          input.kind === "status"
+            ? { status: input.value as ReadingStatus }
+            : { rating: input.value as number },
+          "agent",
         );
-        return { proposalId: proposal.proposalId, state: "pending" as const };
+        if (!book)
+          throw new RecordNotFoundError(`Book ${input.bookId} was not found`);
+        return {
+          bookId: input.bookId,
+          kind: input.kind,
+          value: input.kind === "status" ? book.status : book.rating,
+        };
       });
     },
   });
@@ -646,6 +655,6 @@ export function createBookExplorerTools(
     upsertBook,
     upsertSeries,
     recordRecommendation,
-    proposeChange,
+    updateLibrary,
   ];
 }

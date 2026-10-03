@@ -52,6 +52,7 @@ export const COMPLETE_SYSTEM_PROMPT = [
   "For web research, use web_search with provider omitted or exactly openai and workflow omitted or exactly none.",
   "Do not send includeContent and never send a provider array.",
   "Search and record_recommendation are separate tool rounds so search citations can be captured first.",
+  "After using update_library, summarize the library changes in your response and tell the user they can correct them in the book detail panel.",
   "Distinguish model-memory suggestions from researched claims and never invent citations.",
 ].join(" ");
 
@@ -71,11 +72,22 @@ export interface RuntimeDependencies {
   modelRuntimeFactory?: (options: RuntimeOptions) => Promise<AgentModelRuntime>;
   loaderFactory?: (options: Record<string, unknown>) => ResourceLoader;
   resourceLoaderFactory?: (options: Record<string, unknown>) => ResourceLoader;
-  sessionFactory?: (options: CreateAgentSessionOptions) => Promise<{ session: AgentSession }>;
-  agentSessionFactory?: (options: CreateAgentSessionOptions) => Promise<{ session: AgentSession }>;
-  credentialReader?: (providerId: string, authPath: string) => Credential | undefined;
-  extensionImporter?: (extensionPath: string) => void | Promise<void> | string | Promise<string>;
-  dynamicExtensionImport?: (extensionPath: string) => void | Promise<void> | string | Promise<string>;
+  sessionFactory?: (
+    options: CreateAgentSessionOptions,
+  ) => Promise<{ session: AgentSession }>;
+  agentSessionFactory?: (
+    options: CreateAgentSessionOptions,
+  ) => Promise<{ session: AgentSession }>;
+  credentialReader?: (
+    providerId: string,
+    authPath: string,
+  ) => Credential | undefined;
+  extensionImporter?: (
+    extensionPath: string,
+  ) => void | Promise<void> | string | Promise<string>;
+  dynamicExtensionImport?: (
+    extensionPath: string,
+  ) => void | Promise<void> | string | Promise<string>;
   extensionPath?: string;
   extensionImported?: boolean;
 }
@@ -111,14 +123,16 @@ export class AgentRuntimeError extends Error {
 function runtimeLike(value: unknown): value is AgentModelRuntime {
   return Boolean(
     value &&
-    typeof value === "object" &&
-    typeof (value as { getModel?: unknown }).getModel === "function" &&
-    typeof (value as { checkAuth?: unknown }).checkAuth === "function" &&
-    typeof (value as { refresh?: unknown }).refresh === "function",
+      typeof value === "object" &&
+      typeof (value as { getModel?: unknown }).getModel === "function" &&
+      typeof (value as { checkAuth?: unknown }).checkAuth === "function" &&
+      typeof (value as { refresh?: unknown }).refresh === "function",
   );
 }
 
-function dependencyOptions(value: RuntimeDependencies | undefined): RuntimeDependencies {
+function dependencyOptions(
+  value: RuntimeDependencies | undefined,
+): RuntimeDependencies {
   if (!value) return {};
   if (typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("Runtime dependencies must be an object");
@@ -126,34 +140,59 @@ function dependencyOptions(value: RuntimeDependencies | undefined): RuntimeDepen
   return value;
 }
 
-function credentialIsFresh(credential: Credential | undefined, now = Date.now()): boolean {
+function credentialIsFresh(
+  credential: Credential | undefined,
+  now = Date.now(),
+): boolean {
   if (!credential || credential.type !== "oauth") return false;
-  return typeof credential.access === "string" && credential.access.length > 0 &&
-    typeof credential.refresh === "string" && credential.refresh.length > 0 &&
-    Number.isFinite(credential.expires) && credential.expires > now;
+  return (
+    typeof credential.access === "string" &&
+    credential.access.length > 0 &&
+    typeof credential.refresh === "string" &&
+    credential.refresh.length > 0 &&
+    Number.isFinite(credential.expires) &&
+    credential.expires > now
+  );
 }
 
-function credentialFailure(credential: Credential | undefined, now = Date.now()): never {
+function credentialFailure(
+  credential: Credential | undefined,
+  now = Date.now(),
+): never {
   if (!credential) {
-    throw new AgentRuntimeError(`Missing OAuth credential for ${PINNED_PROVIDER}; sign in with Pi Codex OAuth first`);
+    throw new AgentRuntimeError(
+      `Missing OAuth credential for ${PINNED_PROVIDER}; sign in with Pi Codex OAuth first`,
+    );
   }
   if (credential.type !== "oauth") {
-    throw new AgentRuntimeError(`Non-OAuth credential for ${PINNED_PROVIDER} is not accepted`);
+    throw new AgentRuntimeError(
+      `Non-OAuth credential for ${PINNED_PROVIDER} is not accepted`,
+    );
   }
   if (!credentialIsFresh(credential, now)) {
-    throw new AgentRuntimeError(`Expired or invalid OAuth credential for ${PINNED_PROVIDER}; restart after refreshing authentication`);
+    throw new AgentRuntimeError(
+      `Expired or invalid OAuth credential for ${PINNED_PROVIDER}; restart after refreshing authentication`,
+    );
   }
-  throw new AgentRuntimeError(`OAuth credential for ${PINNED_PROVIDER} is unavailable`);
+  throw new AgentRuntimeError(
+    `OAuth credential for ${PINNED_PROVIDER} is unavailable`,
+  );
 }
 
 function authFailure(auth: AuthCheck | undefined): never {
   if (!auth) {
-    throw new AgentRuntimeError(`OAuth authentication for ${PINNED_PROVIDER} is unavailable`);
+    throw new AgentRuntimeError(
+      `OAuth authentication for ${PINNED_PROVIDER} is unavailable`,
+    );
   }
   if (auth.type !== "oauth") {
-    throw new AgentRuntimeError(`Only OAuth authentication for ${PINNED_PROVIDER} is accepted`);
+    throw new AgentRuntimeError(
+      `Only OAuth authentication for ${PINNED_PROVIDER} is accepted`,
+    );
   }
-  throw new AgentRuntimeError(`OAuth authentication for ${PINNED_PROVIDER} is unavailable`);
+  throw new AgentRuntimeError(
+    `OAuth authentication for ${PINNED_PROVIDER} is unavailable`,
+  );
 }
 
 function libraryOnly(
@@ -162,10 +201,18 @@ function libraryOnly(
   dependencies: RuntimeDependencies,
   reason: string,
 ): AgentRuntimeState {
-  return { runtime, paths, dependencies, libraryOnlyReason: reason, oauthReady: true };
+  return {
+    runtime,
+    paths,
+    dependencies,
+    libraryOnlyReason: reason,
+    oauthReady: true,
+  };
 }
 
-async function refreshCatalog(runtime: AgentModelRuntime): Promise<{ result?: ModelsRefreshResult; reason?: string }> {
+async function refreshCatalog(
+  runtime: AgentModelRuntime,
+): Promise<{ result?: ModelsRefreshResult; reason?: string }> {
   const signal = AbortSignal.timeout(REFRESH_TIMEOUT_MS);
   try {
     const result = await runtime.refresh({
@@ -175,21 +222,31 @@ async function refreshCatalog(runtime: AgentModelRuntime): Promise<{ result?: Mo
     });
     if (result.aborted) return { reason: "model catalog refresh aborted" };
     if (result.errors.size > 0) {
-      const error = result.errors.get(PINNED_PROVIDER) ?? result.errors.values().next().value;
-      return { reason: `model catalog refresh failed: ${error instanceof Error ? error.message : String(error)}` };
+      const error =
+        result.errors.get(PINNED_PROVIDER) ??
+        result.errors.values().next().value;
+      return {
+        reason: `model catalog refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
     return { result };
   } catch (error) {
-    return { reason: `model catalog refresh failed: ${error instanceof Error ? error.message : String(error)}` };
+    return {
+      reason: `model catalog refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
-async function loadConfiguredExtension(dependencies: RuntimeDependencies): Promise<void> {
-  const importer = dependencies.extensionImporter ?? dependencies.dynamicExtensionImport;
+async function loadConfiguredExtension(
+  dependencies: RuntimeDependencies,
+): Promise<void> {
+  const importer =
+    dependencies.extensionImporter ?? dependencies.dynamicExtensionImport;
   if (!importer || dependencies.extensionImported) return;
   const extensionPath = dependencies.extensionPath ?? defaultExtensionPath();
   const importedPath = await importer(extensionPath);
-  if (typeof importedPath === "string") dependencies.extensionPath = importedPath;
+  if (typeof importedPath === "string")
+    dependencies.extensionPath = importedPath;
   dependencies.extensionImported = true;
 }
 
@@ -197,7 +254,10 @@ function defaultExtensionPath(): string {
   try {
     return require.resolve("pi-web-access/index.ts");
   } catch (error) {
-    throw new AgentRuntimeError("Pinned pi-web-access extension is not installed", { cause: error });
+    throw new AgentRuntimeError(
+      "Pinned pi-web-access extension is not installed",
+      { cause: error },
+    );
   }
 }
 
@@ -212,7 +272,10 @@ export async function initializeAgentRuntime(
     : readStoredCredential(PINNED_PROVIDER, paths.authPath);
   if (!credentialIsFresh(credential)) credentialFailure(credential);
 
-  const runtimeFactory = deps.runtimeFactory ?? deps.modelRuntimeFactory ?? ((options: RuntimeOptions) => ModelRuntime.create(options));
+  const runtimeFactory =
+    deps.runtimeFactory ??
+    deps.modelRuntimeFactory ??
+    ((options: RuntimeOptions) => ModelRuntime.create(options));
   const runtime = await runtimeFactory({
     authPath: paths.authPath,
     modelsPath: paths.modelsPath,
@@ -220,16 +283,25 @@ export async function initializeAgentRuntime(
     refreshOnCreate: false,
   });
   if (!runtimeLike(runtime)) {
-    throw new AgentRuntimeError("ModelRuntime factory returned an invalid runtime");
+    throw new AgentRuntimeError(
+      "ModelRuntime factory returned an invalid runtime",
+    );
   }
 
   let auth: unknown;
   try {
     auth = await runtime.checkAuth(PINNED_PROVIDER);
   } catch (error) {
-    throw new AgentRuntimeError(`OAuth authentication for ${PINNED_PROVIDER} could not be checked`, { cause: error });
+    throw new AgentRuntimeError(
+      `OAuth authentication for ${PINNED_PROVIDER} could not be checked`,
+      { cause: error },
+    );
   }
-  if (!auth || typeof auth !== "object" || (auth as AuthCheck).type !== "oauth") {
+  if (
+    !auth ||
+    typeof auth !== "object" ||
+    (auth as AuthCheck).type !== "oauth"
+  ) {
     authFailure(auth as AuthCheck | undefined);
   }
 
@@ -239,11 +311,23 @@ export async function initializeAgentRuntime(
   }
 
   const refreshed = await refreshCatalog(runtime);
-  if (refreshed.reason) return libraryOnly(runtime, paths, deps, refreshed.reason);
+  if (refreshed.reason)
+    return libraryOnly(runtime, paths, deps, refreshed.reason);
 
-  const model = runtime.getModel(PINNED_PROVIDER, PINNED_MODEL_ID) as Model<Api> | undefined;
-  if (!model || model.provider !== PINNED_PROVIDER || model.id !== PINNED_MODEL_ID) {
-    return libraryOnly(runtime, paths, deps, `Pinned model ${PINNED_MODEL} is unavailable`);
+  const model = runtime.getModel(PINNED_PROVIDER, PINNED_MODEL_ID) as
+    | Model<Api>
+    | undefined;
+  if (
+    !model ||
+    model.provider !== PINNED_PROVIDER ||
+    model.id !== PINNED_MODEL_ID
+  ) {
+    return libraryOnly(
+      runtime,
+      paths,
+      deps,
+      `Pinned model ${PINNED_MODEL} is unavailable`,
+    );
   }
   return {
     runtime,
@@ -260,15 +344,20 @@ export async function createTurnLoader(
   customTools: readonly ToolDefinition[],
   citationCapture: CitationCapture,
 ): Promise<ResourceLoader> {
-  if (!Array.isArray(customTools)) throw new TypeError("Custom tools must be an array");
+  if (!Array.isArray(customTools))
+    throw new TypeError("Custom tools must be an array");
   if (!state.model || state.libraryOnlyReason) {
-    throw new AgentRuntimeError(state.libraryOnlyReason ?? "Model turns are unavailable in library-only mode");
+    throw new AgentRuntimeError(
+      state.libraryOnlyReason ??
+        "Model turns are unavailable in library-only mode",
+    );
   }
   const paths = scrubWebSearchEnvironment(state.paths);
   writeWebSearchConfig(paths);
   ensureWebSearchCache(paths);
   await loadConfiguredExtension(state.dependencies);
-  const resolvedExtensionPath = state.dependencies.extensionPath ?? defaultExtensionPath();
+  const resolvedExtensionPath =
+    state.dependencies.extensionPath ?? defaultExtensionPath();
   const loaderOptions: Record<string, unknown> = {
     cwd: paths.cwd,
     agentDir: paths.agentDir,
@@ -282,7 +371,9 @@ export async function createTurnLoader(
     systemPromptOverride: () => COMPLETE_SYSTEM_PROMPT,
     appendSystemPromptOverride: () => [],
   };
-  const loaderFactory = state.dependencies.loaderFactory ?? state.dependencies.resourceLoaderFactory;
+  const loaderFactory =
+    state.dependencies.loaderFactory ??
+    state.dependencies.resourceLoaderFactory;
   const loader = loaderFactory
     ? loaderFactory(loaderOptions)
     : new DefaultResourceLoader(loaderOptions as never);
@@ -297,7 +388,10 @@ export async function createTurnSession(
   options: TurnSessionOptions = {},
 ): Promise<TurnSession> {
   if (!runtime.model || runtime.libraryOnlyReason) {
-    throw new AgentRuntimeError(runtime.libraryOnlyReason ?? "Model turns are unavailable in library-only mode");
+    throw new AgentRuntimeError(
+      runtime.libraryOnlyReason ??
+        "Model turns are unavailable in library-only mode",
+    );
   }
   const loader = await createTurnLoader(runtime, customTools, citationCapture);
   const sessionOptions = {
@@ -310,9 +404,12 @@ export async function createTurnSession(
     tools: [...ACTIVE_TOOL_NAMES],
     customTools: [...customTools],
     resourceLoader: loader,
-    sessionManager: options.sessionManager ?? SessionManager.inMemory(runtime.paths.cwd),
+    sessionManager:
+      options.sessionManager ?? SessionManager.inMemory(runtime.paths.cwd),
   } satisfies CreateAgentSessionOptions;
-  const sessionFactory = runtime.dependencies.sessionFactory ?? runtime.dependencies.agentSessionFactory;
+  const sessionFactory =
+    runtime.dependencies.sessionFactory ??
+    runtime.dependencies.agentSessionFactory;
   const sessionResult = sessionFactory
     ? await sessionFactory(sessionOptions)
     : await createAgentSession(sessionOptions);

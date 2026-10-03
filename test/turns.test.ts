@@ -343,7 +343,7 @@ test("turn request marker is durable before prompt and normal completion dispose
         "upsert_book",
         "upsert_series",
         "record_recommendation",
-        "propose_change",
+        "update_library",
       ],
     );
     const content = sessionContents(item, item.conversations[0]);
@@ -748,26 +748,20 @@ test("tool failure status does not terminalize a turn that later completes", asy
   }
 });
 
-test("turn proposal tool appends through the active manager without deadlocking the conversation gate", async () => {
+test("turn update tool directly changes the library", async () => {
   const item = fixture();
   const book = item.library.createOrFindBook({
-    title: "Proposal Book",
+    title: "Updated Book",
     author: "Author",
   });
   const driver = driverFixture(async (session) => {
     const tool = driver.tools?.find(
-      (candidate) => candidate.name === "propose_change",
+      (candidate) => candidate.name === "update_library",
     );
     assert.ok(tool);
     const result = await tool.execute(
-      "proposal-call",
-      {
-        bookId: book.id,
-        kind: "status",
-        value: "read",
-        semanticSlot: "reading-status",
-        explanation: "The user finished the book.",
-      } as never,
+      "update-call",
+      { bookId: book.id, kind: "status", value: "read" } as never,
       undefined,
       undefined,
       {} as never,
@@ -776,12 +770,14 @@ test("turn proposal tool appends through the active manager without deadlocking 
     session.emit({ type: "agent_end", messages: [], willRetry: false });
   });
   try {
-    const service = coordinator(item, driver, ["request-proposal"]);
+    const service = coordinator(item, driver, ["request-update"]);
     const events = await collectSubmit(service, item.conversations[0]);
     assert.deepEqual(events, [{ type: "complete", incomplete: false }]);
-    assert.equal(item.library.getBook(book.id)?.status, "recommended");
-    const content = sessionContents(item, item.conversations[0]);
-    assert.match(content, /book-explorer-proposed-change/);
+    assert.equal(item.library.getBook(book.id)?.status, "read");
+    assert.doesNotMatch(
+      sessionContents(item, item.conversations[0]),
+      /book-explorer-proposed-change/,
+    );
   } finally {
     dispose(item);
   }
