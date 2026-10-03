@@ -1,11 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -19,7 +13,6 @@ import {
   createCitationCapture,
   type CitationCapture,
 } from "../src/search-guard.js";
-import { deterministicProposalId } from "../src/proposals.js";
 import {
   createBookExplorerTools,
   type ToolEnvelope,
@@ -118,7 +111,7 @@ test("tool schema exposes exactly six strict definitions and accepts valid liter
         "upsert_book",
         "upsert_series",
         "record_recommendation",
-        "propose_change",
+        "update_library",
       ],
     );
     const isbn = "9780306406157";
@@ -148,12 +141,10 @@ test("tool schema exposes exactly six strict definitions and accepts valid liter
         cautions: "x".repeat(2000),
         citationTokens: ["citation_1"],
       },
-      propose_change: {
+      update_library: {
         bookId: 1,
         kind: "rating",
         value: 1,
-        semanticSlot: "x".repeat(100),
-        explanation: "x".repeat(2000),
       },
     };
     for (const [name, input] of Object.entries(validInputs))
@@ -214,76 +205,14 @@ test("tool schemas reject unknown properties, overlong values, and invalid bound
         "record_recommendation",
         { bookId: 1, rationale: "R", requestId: "attacker-request" },
       ],
+      ["update_library", { bookId: 1, kind: "status", value: "finished" }],
+      ["update_library", { bookId: 1, kind: "rating", value: 6 }],
+      ["update_library", { bookId: 1, kind: "note", value: "x".repeat(4001) }],
+      ["update_library", { bookId: 1, kind: "status", value: 4 }],
+      ["update_library", { bookId: 1, kind: "rating", value: "read" }],
       [
-        "propose_change",
-        {
-          bookId: 1,
-          kind: "status",
-          value: "finished",
-          semanticSlot: "s",
-          explanation: "e",
-        },
-      ],
-      [
-        "propose_change",
-        {
-          bookId: 1,
-          kind: "rating",
-          value: 6,
-          semanticSlot: "s",
-          explanation: "e",
-        },
-      ],
-      [
-        "propose_change",
-        {
-          bookId: 1,
-          kind: "note",
-          value: "x".repeat(4001),
-          semanticSlot: "s",
-          explanation: "e",
-        },
-      ],
-      [
-        "propose_change",
-        {
-          bookId: 1,
-          kind: "status",
-          value: 4,
-          semanticSlot: "s",
-          explanation: "e",
-        },
-      ],
-      [
-        "propose_change",
-        {
-          bookId: 1,
-          kind: "rating",
-          value: "read",
-          semanticSlot: "s",
-          explanation: "e",
-        },
-      ],
-      [
-        "propose_change",
-        {
-          bookId: 1,
-          kind: "note",
-          value: "n",
-          semanticSlot: "s",
-          explanation: "x".repeat(2001),
-        },
-      ],
-      [
-        "propose_change",
-        {
-          bookId: 1,
-          kind: "status",
-          value: "read",
-          semanticSlot: "s",
-          explanation: "e",
-          requestId: "attacker-request",
-        },
+        "update_library",
+        { bookId: 1, kind: "note", value: "n", requestId: "attacker-request" },
       ],
     ];
     for (const [name, input] of invalidInputs)
@@ -310,15 +239,8 @@ test("tool handlers validate before database actions and reject direct user-owne
         { bookId: 1, rationale: "R", requestId: "forged" },
       ],
       [
-        "propose_change",
-        {
-          bookId: 1,
-          kind: "status",
-          value: "read",
-          semanticSlot: "s",
-          explanation: "e",
-          requestId: "forged",
-        },
+        "update_library",
+        { bookId: 1, kind: "status", value: "read", requestId: "forged" },
       ],
     ] as Array<[string, unknown]>) {
       const result = await execute(item, name, input);
@@ -472,42 +394,55 @@ test("record_recommendation captures only request-local citation tokens and is i
   }
 });
 
-test("propose_change uses closure-owned request and conversation identity without approved state mutation", async () => {
-  const item = fixture("request-proposal");
+test("update_library directly changes status, rating, and notes with conversation provenance", async () => {
+  const item = fixture();
   try {
     const book = item.library.createOrFindBook({
       title: "Book",
       author: "Author",
     });
-    const result = await execute(item, "propose_change", {
-      bookId: book.id,
-      kind: "status",
-      value: "read",
-      semanticSlot: "reading-status",
-      explanation: "The user said they finished it.",
-    });
-    assert.equal(result.ok, true);
-    const proposalData = result.ok
-      ? (result.data as { proposalId: string; state: string })
-      : undefined;
-    assert.deepEqual(proposalData, {
-      proposalId: deterministicProposalId(
-        "request-proposal",
-        "status",
-        book.id,
-        "reading-status",
-      ),
-      state: "pending",
-    });
-    assert.equal(item.library.getBook(book.id)?.status, "recommended");
-    const session = join(item.root, "sessions");
-    const files = readdirSync(session).filter((name) =>
-      name.endsWith(".jsonl"),
+
+    assert.equal(
+      (
+        await execute(item, "update_library", {
+          bookId: book.id,
+          kind: "status",
+          value: "read",
+        })
+      ).ok,
+      true,
     );
-    assert.equal(files.length, 1);
-    const content = readFileSync(join(session, files[0]!), "utf8");
-    assert.match(content, /"requestId":"request-proposal"/);
-    assert.doesNotMatch(content, /attacker-request/);
+    assert.equal(
+      (
+        await execute(item, "update_library", {
+          bookId: book.id,
+          kind: "rating",
+          value: 5,
+        })
+      ).ok,
+      true,
+    );
+    const noteText = "x".repeat(101);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      assert.equal(
+        (
+          await execute(item, "update_library", {
+            bookId: book.id,
+            kind: "note",
+            value: noteText,
+          })
+        ).ok,
+        true,
+      );
+    }
+
+    const updated = item.library.getBook(book.id);
+    assert.equal(updated?.status, "read");
+    assert.equal(updated?.rating, 5);
+    assert.equal(updated?.notes.length, 1);
+    assert.equal(updated?.notes[0]?.note, noteText);
+    assert.equal(updated?.notes[0]?.sourceConversationId, item.conversationId);
+    assert.match(updated?.notes[0]?.sourceProposalId ?? "", /^direct:/);
   } finally {
     dispose(item);
   }

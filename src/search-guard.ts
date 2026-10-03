@@ -13,13 +13,10 @@ export const CUSTOM_TOOL_NAMES = [
   "upsert_book",
   "upsert_series",
   "record_recommendation",
-  "propose_change",
+  "update_library",
 ] as const;
 
-export const ACTIVE_TOOL_NAMES = [
-  ...CUSTOM_TOOL_NAMES,
-  "web_search",
-] as const;
+export const ACTIVE_TOOL_NAMES = [...CUSTOM_TOOL_NAMES, "web_search"] as const;
 
 export type ActiveToolName = (typeof ACTIVE_TOOL_NAMES)[number];
 
@@ -69,14 +66,20 @@ export class ToolSurfaceError extends Error {
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }
 
-function stateFor(value: SearchGuardState | SearchGuardRuntime): SearchGuardState {
+function stateFor(
+  value: SearchGuardState | SearchGuardRuntime,
+): SearchGuardState {
   const candidate = record(value);
   const nested = candidate?.runtime;
-  if (nested && typeof nested === "object" && typeof (nested as SearchGuardRuntime).checkAuth === "function") {
+  if (
+    nested &&
+    typeof nested === "object" &&
+    typeof (nested as SearchGuardRuntime).checkAuth === "function"
+  ) {
     return value as SearchGuardState;
   }
   return { runtime: value as SearchGuardRuntime };
@@ -88,7 +91,10 @@ export function validateWebSearchArguments(input: unknown): string | null {
   if (Object.hasOwn(value, "includeContent")) {
     return "Web search includeContent is disabled";
   }
-  if (Object.hasOwn(value, "provider") && (value.provider !== "openai" || Array.isArray(value.provider))) {
+  if (
+    Object.hasOwn(value, "provider") &&
+    (value.provider !== "openai" || Array.isArray(value.provider))
+  ) {
     return "Web search provider must be omitted or exactly openai";
   }
   if (Object.hasOwn(value, "workflow") && value.workflow !== "none") {
@@ -97,12 +103,21 @@ export function validateWebSearchArguments(input: unknown): string | null {
   return null;
 }
 
-async function verifySearchRuntime(state: SearchGuardState): Promise<string | null> {
-  if (state.oauthReady === false) return "OpenAI web search requires an OAuth Codex credential";
-  const model = state.model ?? (typeof state.runtime.getModel === "function"
-    ? state.runtime.getModel("openai-codex", "gpt-5.6-sol")
-    : undefined);
-  if (!model || model.provider !== "openai-codex" || model.id !== "gpt-5.6-sol") {
+async function verifySearchRuntime(
+  state: SearchGuardState,
+): Promise<string | null> {
+  if (state.oauthReady === false)
+    return "OpenAI web search requires an OAuth Codex credential";
+  const model =
+    state.model ??
+    (typeof state.runtime.getModel === "function"
+      ? state.runtime.getModel("openai-codex", "gpt-5.6-sol")
+      : undefined);
+  if (
+    !model ||
+    model.provider !== "openai-codex" ||
+    model.id !== "gpt-5.6-sol"
+  ) {
     return "OpenAI web search requires the pinned openai-codex/gpt-5.6-sol model";
   }
   let auth: unknown;
@@ -118,7 +133,10 @@ async function verifySearchRuntime(state: SearchGuardState): Promise<string | nu
   return null;
 }
 
-function errorResult(event: Record<string, unknown>, message: string): SearchGuardToolResult {
+function errorResult(
+  event: Record<string, unknown>,
+  message: string,
+): SearchGuardToolResult {
   return {
     content: [{ type: "text", text: `Web search unavailable: ${message}` }],
     details: event.details,
@@ -126,18 +144,24 @@ function errorResult(event: Record<string, unknown>, message: string): SearchGua
   };
 }
 
-function entriesFrom(value: readonly unknown[] | { getEntries(): readonly unknown[] }): readonly unknown[] {
+function entriesFrom(
+  value: readonly unknown[] | { getEntries(): readonly unknown[] },
+): readonly unknown[] {
   if ("getEntries" in value) return value.getEntries();
   return value;
 }
 
-function searchDataFor(event: Record<string, unknown>, entries: readonly unknown[]): Record<string, unknown> | null {
+function searchDataFor(
+  event: Record<string, unknown>,
+  entries: readonly unknown[],
+): Record<string, unknown> | null {
   const details = record(event.details);
   const searchId = details?.searchId;
   if (typeof searchId !== "string" || searchId.length === 0) return null;
   for (const entry of entries) {
     const item = record(entry);
-    if (item?.type !== "custom" || item.customType !== "web-search-results") continue;
+    if (item?.type !== "custom" || item.customType !== "web-search-results")
+      continue;
     const data = record(item.data);
     if (data?.type === "search" && data.id === searchId) return data;
   }
@@ -145,7 +169,8 @@ function searchDataFor(event: Record<string, unknown>, entries: readonly unknown
 }
 
 function queryProviderError(data: Record<string, unknown>): string | null {
-  if (!Array.isArray(data.queries)) return "Web search returned no correlated query results";
+  if (!Array.isArray(data.queries))
+    return "Web search returned no correlated query results";
   for (const query of data.queries) {
     const value = record(query);
     if (!value || value.provider !== "openai") {
@@ -163,14 +188,20 @@ function capturedCitations(data: Record<string, unknown>): CapturedCitation[] {
     if (!value || value.error || !Array.isArray(value.results)) continue;
     for (const result of value.results) {
       const source = record(result);
-      if (!source || typeof source.url !== "string" || typeof source.title !== "string") continue;
+      if (
+        !source ||
+        typeof source.url !== "string" ||
+        typeof source.title !== "string"
+      )
+        continue;
       let url: string;
       try {
         url = normalizeCitationUrl(source.url);
       } catch {
         continue;
       }
-      const snippet = typeof source.snippet === "string" ? source.snippet : null;
+      const snippet =
+        typeof source.snippet === "string" ? source.snippet : null;
       citations.set(url, {
         url,
         title: source.title,
@@ -187,10 +218,17 @@ function appendTokens(
   tokens: readonly string[],
 ): Array<TextContent | ImageContent> {
   const original = Array.isArray(content)
-    ? content.filter((part): part is TextContent | ImageContent => {
-      const value = record(part);
-      return value?.type === "text" && typeof value.text === "string" || value?.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string";
-    }).map((part) => ({ ...part }))
+    ? content
+        .filter((part): part is TextContent | ImageContent => {
+          const value = record(part);
+          return (
+            (value?.type === "text" && typeof value.text === "string") ||
+            (value?.type === "image" &&
+              typeof value.data === "string" &&
+              typeof value.mimeType === "string")
+          );
+        })
+        .map((part) => ({ ...part }))
     : [];
   if (tokens.length === 0) return original;
   const suffix = `\n\nCitation tokens: ${tokens.join(" ")}`;
@@ -220,7 +258,11 @@ export async function captureWebSearchResult(
   if (runtimeError) return errorResult(event, runtimeError);
 
   const data = searchDataFor(event, entriesFrom(sessionEntries));
-  if (!data) return errorResult(event, "the web-search result could not be correlated to its search entry");
+  if (!data)
+    return errorResult(
+      event,
+      "the web-search result could not be correlated to its search entry",
+    );
   const providerError = queryProviderError(data);
   if (providerError) return errorResult(event, providerError);
 
@@ -244,16 +286,25 @@ export function assertExactToolSurface(session: unknown): void {
   const state = record(value?.state) ?? record(agent?.state);
   const tools = state?.tools;
   if (!Array.isArray(tools)) {
-    throw new ToolSurfaceError("Agent session did not expose an active tool allowlist");
+    throw new ToolSurfaceError(
+      "Agent session did not expose an active tool allowlist",
+    );
   }
-  const names = tools.map((tool) => typeof tool === "string" ? tool : record(tool)?.name);
+  const names = tools.map((tool) =>
+    typeof tool === "string" ? tool : record(tool)?.name,
+  );
   if (names.some((name) => typeof name !== "string")) {
     throw new ToolSurfaceError("Agent session exposed an invalid active tool");
   }
-  const actual = [...names as string[]].sort();
+  const actual = [...(names as string[])].sort();
   const expected = [...ACTIVE_TOOL_NAMES].sort();
-  if (actual.length !== expected.length || actual.some((name, index) => name !== expected[index])) {
-    throw new ToolSurfaceError(`Agent session active tools must be exactly ${ACTIVE_TOOL_NAMES.join(", ")}`);
+  if (
+    actual.length !== expected.length ||
+    actual.some((name, index) => name !== expected[index])
+  ) {
+    throw new ToolSurfaceError(
+      `Agent session active tools must be exactly ${ACTIVE_TOOL_NAMES.join(", ")}`,
+    );
   }
 }
 
@@ -267,16 +318,23 @@ export function createSearchGuardFactory(
       const value = event as { toolName?: unknown; input?: unknown };
       if (value.toolName !== "web_search") return;
       const argumentError = validateWebSearchArguments(value.input);
-      if (argumentError) return { block: true, reason: argumentError, terminate: true };
+      if (argumentError)
+        return { block: true, reason: argumentError, terminate: true };
       const runtimeError = await verifySearchRuntime(state);
-      if (runtimeError) return { block: true, reason: runtimeError, terminate: true };
+      if (runtimeError)
+        return { block: true, reason: runtimeError, terminate: true };
       return undefined;
     });
 
     pi.on("tool_result", async (event, context) => {
       const value = event as { toolName?: unknown };
       if (value.toolName !== "web_search") return undefined;
-      return captureWebSearchResult(event, context.sessionManager, citationCapture, state);
+      return captureWebSearchResult(
+        event,
+        context.sessionManager,
+        citationCapture,
+        state,
+      );
     });
   };
   const callable = Object.assign(factory, { factory });

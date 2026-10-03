@@ -465,6 +465,11 @@ export function renderBookSummary(document, book, options = {}) {
   );
   if (book?.seriesName)
     append(content, field(document, "Series", book.seriesName));
+  if (Number(book?.noteCount) > 0) {
+    const notes = element(document, "span", "badge badge-outline");
+    append(notes, text(document, "Has notes"));
+    append(content, notes);
+  }
   const open = actionButton(document, "Open", "open", () =>
     options.onOpen?.(book),
   );
