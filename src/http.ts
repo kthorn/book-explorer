@@ -790,6 +790,25 @@ function isStateChangingMethod(method: string): boolean {
   );
 }
 
+// ponytail: aliasing applies only to loopback names; the app refuses non-loopback binds, so no other host ever gets an alias.
+function loopbackAliases(hostOrOrigin: string): Array<string> {
+  const schemeEnd = hostOrOrigin.indexOf("://");
+  const prefix = schemeEnd === -1 ? "" : hostOrOrigin.slice(0, schemeEnd + 3);
+  const authority = schemeEnd === -1 ? hostOrOrigin : hostOrOrigin.slice(schemeEnd + 3);
+  const colon = authority.indexOf(":");
+  const hostname = colon === -1 ? authority : authority.slice(0, colon);
+  const suffix = colon === -1 ? "" : authority.slice(colon);
+  const alias =
+    hostname === "127.0.0.1"
+      ? "localhost"
+      : hostname === "localhost"
+        ? "127.0.0.1"
+        : undefined;
+  return alias === undefined
+    ? [hostOrOrigin]
+    : [hostOrOrigin, `${prefix}${alias}${suffix}`];
+}
+
 function requireMutationSecurity(
   request: IncomingMessage,
   server: Server,
@@ -797,7 +816,7 @@ function requireMutationSecurity(
   csrfToken: string,
 ): void {
   const host = expectedHost(server, deps.host);
-  if (request.headers.host !== host) {
+  if (!loopbackAliases(host).includes(request.headers.host ?? "")) {
     throw new HttpError(
       403,
       "invalid_host",
@@ -805,7 +824,11 @@ function requireMutationSecurity(
       false,
     );
   }
-  if (request.headers.origin !== expectedOrigin(deps, host)) {
+  if (
+    !loopbackAliases(expectedOrigin(deps, host)).includes(
+      request.headers.origin ?? "",
+    )
+  ) {
     throw new HttpError(
       403,
       "invalid_origin",
